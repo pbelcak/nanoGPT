@@ -96,8 +96,11 @@ class VQizer(nn.Module):
         super().__init__()
         # n_vqheads holds the number of heads to use for vector quantization
         # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
-        self.vq_head_weights = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, config.n_embd))
-        self.vq_codebooks = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, config.n_embd))
+        self.head_size: int = config.n_embd // config.n_vqheads
+        self.config = config
+
+        self.vq_head_weights = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, self.head_size))
+        self.vq_codebooks = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, self.head_size))
 
         # temperature
         self.temperature = nn.Parameter(torch.tensor(1.0))
@@ -106,22 +109,72 @@ class VQizer(nn.Module):
         # input shape (batch, seq_len, emb_dim)
         # matmul x and vq_head_weights to get per-head codebook choice logits
         # then apply softmax (with temperature self.t!) to get probabilities
-        logits = torch.einsum('bse,hoe->bsho', x, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
-        if self.training:
-            probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
-            # perform soft mixture by matmul of probs and codebooks
-            x = torch.einsum('bsho,hoe->bse', probs, self.vq_codebooks) # shape (batch, seq_len, emb_dim)
-        else:
-            # just choose the argmax codebook entry for each head
-            _, choice = torch.max(logits, dim=-1) # shape (batch, seq_len, n_vqheads)
-            # gather the codebook entries
-            x = torch.gather(
-                self.vq_codebooks.unsqueeze(0).unsqueeze(0).expand(*x.shape[0:2], -1, -1, -1),
-                3,
-                choice.unsqueeze(-1).unsqueeze(3).expand(-1, -1, -1, 1, x.size(-1))
-            ).squeeze(-2) # shape (batch, seq_len, emb_dim)     
-            x = x.sum(dim=2) # sum over the heads
+        x_prepped = x.view(*x.shape[0:2], self.config.n_vqheads, self.head_size)
+        logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        
+        probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        # perform soft mixture by matmul of probs and codebooks
+        x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
+        x = x.flatten(2) # shape (batch, seq_len, emb_dim)
 
+        return x
+
+class FastComponent(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        
+        self.out_size: int = config.n_embd // config.n_vqheads
+        self.depth: int = 2
+        self.k: int = 4
+
+        self.choice_linears = nn.ModuleList([nn.Linear(config.n_embd, self.k) for _ in range(self.depth)])
+        self.codebook = nn.Parameter(torch.randn(self.k ** self.depth, self.out_size))
+
+        # temperature
+        self.temperature = nn.Parameter(torch.tensor(1.0))
+
+    def set_temperature(self, temperature: float) -> None:
+        self.temperature.data.fill_(temperature)
+
+    def forward(self, x: torch.Tensor):
+        # input shape (batch, seq_len, emb_dim)
+        choice_mixture = torch.ones(x.shape[0:2] + (self.k,) * self.depth, dtype=torch.float, device=x.device)
+        for d in range(self.depth):
+            choice_logits = self.choice_linears[d](x)
+            choice_probs = F.softmax(choice_logits / self.temperature, dim=-1)
+            choice_mixture *= choice_probs.view(*choice_probs.shape[0:2], *([1] * d + [self.k] + [1] * (self.depth - d-1)))
+
+        choice_mixture = choice_mixture.flatten(2) # shape (batch, seq_len, k ** depth)
+        out = torch.einsum('bsh,ho->bso', choice_mixture, self.codebook) # shape (batch, seq_len, out_size)
+
+        return out
+
+class FastMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dropout = nn.Dropout(config.dropout)
+        self.components = nn.ModuleList([FastComponent(config) for _ in range(config.n_vqheads)])
+        self.mixer = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+    def forward(self, x):
+        x = torch.cat([c(x) for c in self.components], dim=-1)
+        x = self.mixer(x)
+        x = self.dropout(x)
+        return x
+
+class FFFMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
         return x
 
 class FancyMLP(nn.Module):
@@ -129,9 +182,10 @@ class FancyMLP(nn.Module):
         super().__init__()
         self.vq_in   = VQizer(config)
         self.vq_out  = VQizer(config)
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        hidden_mult: int = 6
+        self.c_fc    = nn.Linear(config.n_embd, hidden_mult * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(hidden_mult * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -252,7 +306,7 @@ class GPT(nn.Module):
     def set_temperature(self, temperature: float):
         # set the temperature parameter in the VQizer modules to 1.0
         for m in self.modules():
-            if isinstance(m, VQizer):
+            if isinstance(m, VQizer) or isinstance(m, FastComponent):
                 m.temperature.data.fill_(temperature)
 
     def crop_block_size(self, block_size):
