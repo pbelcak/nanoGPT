@@ -54,6 +54,9 @@ n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
+vq_blocks_start = 3
+n_vqheads = 4
+n_vqoptions = 64
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -66,6 +69,9 @@ decay_lr = True # whether to decay the learning rate
 warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+# temperature setup
+start_temperature = 1.0
+end_temperature = 0.001
 # DDP settings
 backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
@@ -144,8 +150,14 @@ if os.path.exists(meta_path):
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
 # model init
-model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+model_args = dict(
+    n_layer=n_layer,
+    n_head=n_head,
+    n_embd=n_embd,
+    block_size=block_size,
+    bias=bias, vocab_size=None, dropout=dropout,
+    vq_blocks_start=vq_blocks_start, n_vqheads=n_vqheads, n_vqoptions=n_vqoptions
+) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -253,6 +265,12 @@ local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
 while True:
+    # temperature
+    if eval_only:
+        temperature = config["end_temperature"]
+    else:
+        temperature = config["start_temperature"] + (config["end_temperature"] - config["start_temperature"]) * min(iter_num / max_iters, 1.0)
+    raw_model.set_temperature(temperature)
 
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
@@ -262,7 +280,7 @@ while True:
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, temp {temperature}, lr {lr}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,

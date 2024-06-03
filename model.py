@@ -91,14 +91,68 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class Block(nn.Module):
-
+class VQizer(nn.Module):
     def __init__(self, config):
+        super().__init__()
+        # n_vqheads holds the number of heads to use for vector quantization
+        # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
+        self.vq_head_weights = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, config.n_embd))
+        self.vq_codebooks = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, config.n_embd))
+
+        # temperature
+        self.temperature = nn.Parameter(torch.tensor(1.0))
+
+    def forward(self, x: torch.Tensor):
+        # input shape (batch, seq_len, emb_dim)
+        # matmul x and vq_head_weights to get per-head codebook choice logits
+        # then apply softmax (with temperature self.t!) to get probabilities
+        logits = torch.einsum('bse,hoe->bsho', x, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        if self.training:
+            probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            # perform soft mixture by matmul of probs and codebooks
+            x = torch.einsum('bsho,hoe->bse', probs, self.vq_codebooks) # shape (batch, seq_len, emb_dim)
+        else:
+            # just choose the argmax codebook entry for each head
+            _, choice = torch.max(logits, dim=-1) # shape (batch, seq_len, n_vqheads)
+            # gather the codebook entries
+            x = torch.gather(
+                self.vq_codebooks.unsqueeze(0).unsqueeze(0).expand(*x.shape[0:2], -1, -1, -1),
+                3,
+                choice.unsqueeze(-1).unsqueeze(3).expand(-1, -1, -1, 1, x.size(-1))
+            ).squeeze(-2) # shape (batch, seq_len, emb_dim)     
+            x = x.sum(dim=2) # sum over the heads
+
+        return x
+
+class FancyMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.vq_in   = VQizer(config)
+        self.vq_out  = VQizer(config)
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.vq_in(x)
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.vq_out(x)
+        x = self.dropout(x)
+        return x
+
+class Block(nn.Module):
+    def __init__(self, config, i: int):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
+        if hasattr(config, 'vq_blocks_start') and i >= config.vq_blocks_start:
+            self.mlp = FancyMLP(config)
+        else:
+            self.mlp = MLP(config)
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -114,6 +168,9 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    vq_blocks_start: int = 6
+    n_vqheads: int = 4
+    n_vqoptions: int = 64
 
 class GPT(nn.Module):
 
@@ -127,7 +184,7 @@ class GPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -191,6 +248,12 @@ class GPT(nn.Module):
             loss = None
 
         return logits, loss
+
+    def set_temperature(self, temperature: float):
+        # set the temperature parameter in the VQizer modules to 1.0
+        for m in self.modules():
+            if isinstance(m, VQizer):
+                m.temperature.data.fill_(temperature)
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
