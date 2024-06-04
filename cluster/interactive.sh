@@ -7,8 +7,14 @@ source cluster/secrets.sh
 
 PROJECT_PATH=$PB/nanoGPT
 
-# interactive discretization
+# interactive lutification
 I=0
-JOB_NAME=nanoGPT_lut_$I
+JOB_NAME=train_lut_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/train_gpt2_lut.py
+
+# interactive eval run
+I=0
+JOB_NAME=eval_lut_$I
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/eval_gpt2_lut.py
