@@ -182,10 +182,9 @@ class FancyMLP(nn.Module):
         super().__init__()
         self.vq_in   = VQizer(config)
         self.vq_out  = VQizer(config)
-        hidden_mult: int = 6
-        self.c_fc    = nn.Linear(config.n_embd, hidden_mult * config.n_embd, bias=config.bias)
+        self.c_fc    = nn.Linear(config.n_embd, config.n_hidden_multiplier * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(hidden_mult * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(config.n_hidden_multiplier * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -220,9 +219,11 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
+    n_hidden_multiplier: int = 4
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    vq_blocks_start: int = 6
+
+    vq_blocks_start: int = 1000
     n_vqheads: int = 4
     n_vqoptions: int = 64
 

@@ -29,6 +29,16 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 
+import sys
+sys.path.append(os.environ.get('SUBMIT_SCRIPTS','.'))
+can_autoresume: bool = False
+try:
+    from userlib.auto_resume import AutoResume # pylint: disable=import-error
+    can_autoresume = True
+except ModuleNotFoundError:
+    print("AutoResume not available")
+    can_autoresume = False
+
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
@@ -45,18 +55,19 @@ wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
 dataset = 'openwebtext'
-gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
+gradient_accumulation_steps = 4 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 # model
 n_layer = 12
 n_head = 12
 n_embd = 768
+n_hidden_multiplier = 4
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
-vq_blocks_start = 3
+vq_blocks_start = 1000
 n_vqheads = 4
-n_vqoptions = 64
+n_vqoptions = 256
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -71,7 +82,7 @@ lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # temperature setup
 start_temperature = 1.0
-end_temperature = 0.001
+end_temperature = 0.01
 # DDP settings
 backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
@@ -107,8 +118,12 @@ else:
 tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
 print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
+if os.path.exists(os.path.join(out_dir, 'ckpt.pt')):
+    init_from = "resume"
+
 if master_process:
-    os.makedirs(out_dir, exist_ok=True)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
 torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -116,6 +131,10 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 # note: float16 data type will automatically use a GradScaler
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+
+# if can autoresume, init autoresume
+if can_autoresume:
+    AutoResume.init()
 
 # poor man's data loader
 data_dir = os.path.join('data', dataset)
@@ -286,6 +305,7 @@ while True:
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
+                "train/temperature": temperature,
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })
@@ -296,6 +316,7 @@ while True:
                     'model': raw_model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'model_args': model_args,
+                    'curr_temperature': temperature,
                     'iter_num': iter_num,
                     'best_val_loss': best_val_loss,
                     'config': config,
@@ -345,6 +366,18 @@ while True:
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
+
+    # autoresume logic
+    if master_process:        
+        if can_autoresume and AutoResume.termination_requested():
+            print("Training termination request found!",flush=True)
+            progress = "Progress %d%% (iter %d of %d)" % ( (iter_num*100/max_iters), iter_num, max_iters )
+            AutoResume.request_resume(user_dict=None, message=progress)
+            break
+    else:
+        if can_autoresume and AutoResume.termination_requested():
+            print(f"Training terminated on request in rank {torch.distributed.get_rank()}, returning")
+            break
 
     # termination conditions
     if iter_num > max_iters:
