@@ -5,7 +5,7 @@ batch_size = 8
 eval_iters = 1000 # use more iterations to get good estimate
 eval_only = True
 wandb_log = False
-init_from = 'resume'
+init_from = 'eval_ckpt'
 
 # setup out dir
 out_dir = "out/gpt2-lut-118B-11-4x1024"

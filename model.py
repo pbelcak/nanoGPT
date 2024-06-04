@@ -112,7 +112,14 @@ class VQizer(nn.Module):
         x_prepped = x.view(*x.shape[0:2], self.config.n_vqheads, self.head_size)
         logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
-        probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        if self.training:
+            probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        else:
+            # at inference time we turn the probabilities into one-hot vectors
+            # this is the same as taking the argmax of the probs
+            _, argmax = torch.max(logits, dim=-1)
+            probs = F.one_hot(argmax, num_classes=self.config.n_vqoptions).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+
         # perform soft mixture by matmul of probs and codebooks
         x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
         x = x.flatten(2) # shape (batch, seq_len, emb_dim)

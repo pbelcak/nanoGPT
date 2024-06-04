@@ -12,3 +12,4 @@ env/
 venv/
 out/
 wandb/
+secrets.sh

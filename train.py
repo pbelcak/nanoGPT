@@ -48,6 +48,7 @@ log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
+standalone_ckpt_frequency = 10000 # save a standalone checkpoint every N iters (will not be overwritten by the following ckpts)
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
 wandb_log = False # disabled by default
@@ -186,7 +187,7 @@ if init_from == 'scratch':
     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
-elif init_from == 'resume':
+elif init_from == 'resume' or init_from == 'eval_ckpt':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
@@ -207,7 +208,8 @@ elif init_from == 'resume':
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
-    iter_num = checkpoint['iter_num']
+    iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
+    temperature = checkpoint['curr_temperature']
     best_val_loss = checkpoint['best_val_loss']
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
@@ -275,7 +277,7 @@ def get_lr(it):
 # logging
 if wandb_log and master_process:
     import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True)
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -285,11 +287,9 @@ raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
 while True:
     # temperature
-    if eval_only:
-        temperature = config["end_temperature"]
-    else:
+    if not eval_only:
         temperature = config["start_temperature"] + (config["end_temperature"] - config["start_temperature"]) * min(iter_num / max_iters, 1.0)
-    raw_model.set_temperature(temperature)
+        raw_model.set_temperature(temperature)
 
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
@@ -323,7 +323,11 @@ while True:
                 }
                 print(f"saving checkpoint to {out_dir}")
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-    if iter_num == 0 and eval_only:
+
+                if iter_num % standalone_ckpt_frequency == 0:
+                    torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{iter_num}.pt'))
+    
+    if eval_only:
         break
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
