@@ -84,6 +84,8 @@ decay_lr = True # whether to decay the learning rate
 warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+# multiple fwd pass setting
+fmax: int = 1
 # temperature setup
 start_temperature = 1.0
 end_temperature = 0.01
@@ -152,9 +154,12 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
+    shift: int
     if distribution_model:
-        x = torch.nn.functional.one_hot(x, num_classes=model_args['vocab_size']).float()
-    y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
+        shift = 0
+    else:
+        shift = 1
+    y = torch.stack([torch.from_numpy((data[i+shift:i+shift+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
@@ -348,12 +353,26 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            logits, loss = model(X, Y)
-            loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
-        # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        X, Y = get_batch('train')
-        # backward pass, with gradient scaling if training in fp16
-        scaler.scale(loss).backward()
+            for f in range(0, fmax):
+                inX: torch.Tensor
+                if f == 0:
+                    inX = X
+                else:
+                    if len(inX.shape) == 2:
+                        # one-hot encode inX to have 3 dims
+                        inX = torch.nn.functional.one_hot(inX, num_classes=model_args['vocab_size']).to(dtype=ptdtype)
+                    
+                    outprobs = torch.softmax(logits[:, block_size//2:].detach(), dim=-1)
+                    # form inX by concatenatening the first half of X with the second half of logit probs
+                    inX = torch.cat((inX[:, :block_size//2], outprobs), dim=1)
+                logits, loss = model(inX, Y)
+                loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
+                
+                if f == fmax-1:
+                    # immediately async prefetch next batch while model is doing the forward pass on the GPU
+                    X, Y = get_batch('train')
+                # backward pass, with gradient scaling if training in fp16
+                scaler.scale(loss).backward()
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)

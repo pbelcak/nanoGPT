@@ -300,6 +300,8 @@ class GPT(nn.Module):
     def forward(self, input, targets=None, f: int = 0):
         device = input.device
         if self.config.distribution_model:
+            if len(input.shape) == 2:
+                input = torch.nn.functional.one_hot(input, num_classes=self.config.vocab_size).float()
             b, t, v = input.size()
         else:
             b, t = input.size()
@@ -326,7 +328,7 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             if self.config.distribution_model:
                 # cut the first half from both logits and targets
-                logits = logits[:, self.config.block_size//2:, :]
+                logits = logits[:, self.config.block_size//2:]
                 targets = targets[:, self.config.block_size//2:]
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
 
