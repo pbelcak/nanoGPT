@@ -62,6 +62,8 @@ block_size = 1024
 # model
 n_layer = 12
 n_head = 12
+bidirectional_attention = False
+distribution_model = False
 n_embd = 768
 n_hidden_multiplier = 4
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
@@ -90,6 +92,7 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = True # use PyTorch 2.0 to compile the model to be faster
+quick_debug = True
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
@@ -119,7 +122,7 @@ else:
 tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
 print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
-if os.path.exists(os.path.join(out_dir, 'ckpt.pt')):
+if os.path.exists(os.path.join(out_dir, 'ckpt.pt')) and not quick_debug:
     init_from = "resume"
 
 if master_process:
@@ -148,6 +151,8 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
+    if distribution_model:
+        x = torch.nn.functional.one_hot(x, num_classes=model_args['vocab_size']).float()
     y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
@@ -171,6 +176,8 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(
+    bidirectional_attention=bidirectional_attention,
+    distribution_model=distribution_model,
     n_layer=n_layer,
     n_head=n_head,
     n_embd=n_embd,
