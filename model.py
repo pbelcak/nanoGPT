@@ -297,11 +297,12 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input, targets=None, f: int = 0):
+    def forward(self, input, targets=None):
         device = input.device
         if self.config.distribution_model:
             if len(input.shape) == 2:
                 input = torch.nn.functional.one_hot(input, num_classes=self.config.vocab_size).float()
+                input[:, self.config.block_size//2:, :] = 1.0/self.config.vocab_size
             b, t, v = input.size()
         else:
             b, t = input.size()
@@ -309,11 +310,7 @@ class GPT(nn.Module):
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
-        if self.config.distribution_model:
-            input[:, self.config.block_size//2:, :] = 1.0/self.config.vocab_size
-            tok_emb = self.transformer.wte(input)
-        else:
-            tok_emb = self.transformer.wte(input) # token embeddings of shape (b, t, n_embd)
+        tok_emb = self.transformer.wte(input) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         if not self.config.use_positional_embeddings:
             x = self.transformer.drop(tok_emb)
