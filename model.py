@@ -325,9 +325,11 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             if self.config.distribution_model:
                 # cut the first half from both logits and targets
-                logits = logits[:, self.config.block_size//2:]
-                targets = targets[:, self.config.block_size//2:]
+                #logits = logits[:, self.config.block_size//2:]
+                #targets = targets[:, self.config.block_size//2:]
+                pass
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
+            logits = logits[:, self.config.block_size//2:]
 
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
