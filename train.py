@@ -29,6 +29,8 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 
+import transformers
+
 import sys
 sys.path.append(os.environ.get('SUBMIT_SCRIPTS','.'))
 can_autoresume: bool = False
@@ -179,6 +181,9 @@ if os.path.exists(meta_path):
         meta = pickle.load(f)
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
+
+# golden model loading and init
+golden_model = transformers.AutoModelForCausalLM.from_pretrained('gpt2')
 
 # model init
 model_args = dict(
@@ -354,10 +359,15 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            for f in range(0, fmax):
+            for f in range(0, fmax+1):
                 inX: torch.Tensor
                 if f == 0:
                     inX = X
+                    output = golden_model(inX, labels=Y)
+                    logits, loss = output.logits, output.loss
+                    # shift the logits by 1 to the right and put a one-hot encoding of the first token in the first position
+                    logits = torch.cat((torch.nn.functional.one_hot(inX[:, 0], num_classes=model_args['vocab_size']).to(dtype=ptdtype), logits[:, :-1]), dim=1)
+                    logits = logits[:, block_size//2:]
                 else:
                     if len(inX.shape) == 2:
                         # one-hot encode inX to have 3 dims
@@ -366,16 +376,21 @@ while True:
                     outprobs = torch.softmax(logits.detach(), dim=-1)
                     # form inX by concatenatening the first half of X with the second half of logit probs
                     inX = torch.cat((inX[:, :block_size//2], outprobs), dim=1)
-                logits, loss = model(inX, Y) # logits are already just for the second half of inX
+                    logits, loss = model(inX, Y) # logits are already just for the second half of inX
+                
                 loss = loss / (gradient_accumulation_steps*fmax) # scale the loss to account for gradient accumulation
                 
                 if f == fmax-1:
                     # immediately async prefetch next batch while model is doing the forward pass on the GPU
                     X, Y = get_batch('train')
-                # backward pass, with gradient scaling if training in fp16
-                scaler.scale(loss).backward()
+                
+                if f > 0:
+                    # backward pass, with gradient scaling if training in fp16
+                    scaler.scale(loss).backward()
+                
                 # store the loss for logging
                 flosses[f].append(loss.item())
+    
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
