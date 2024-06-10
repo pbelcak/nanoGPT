@@ -60,6 +60,7 @@ gradient_accumulation_steps = 4 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 # model
+use_positional_embeddings = True
 n_layer = 12
 n_head = 12
 bidirectional_attention = False
@@ -284,7 +285,7 @@ def get_lr(it):
 # logging
 if wandb_log and master_process:
     import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True)
+    wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True, dir=out_dir)
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -381,7 +382,7 @@ while True:
     # autoresume logic
     if master_process:        
         if can_autoresume and AutoResume.termination_requested():
-            print("Training termination request found!",flush=True)
+            print("Training termination request found!", flush=True)
             progress = "Progress %d%% (iter %d of %d)" % ( (iter_num*100/max_iters), iter_num, max_iters )
             AutoResume.request_resume(user_dict=None, message=progress)
             break
