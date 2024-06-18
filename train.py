@@ -29,8 +29,6 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 
-import transformers
-
 import sys
 sys.path.append(os.environ.get('SUBMIT_SCRIPTS','.'))
 can_autoresume: bool = False
@@ -185,10 +183,6 @@ if os.path.exists(meta_path):
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
-# golden model loading and init
-golden_model = transformers.AutoModelForCausalLM.from_pretrained('gpt2')
-golden_model.to(device)
-
 # model init
 model_args = dict(
     bidirectional_attention=bidirectional_attention,
@@ -199,7 +193,7 @@ model_args = dict(
     block_size=block_size,
     bias=bias, vocab_size=None, dropout=dropout,
     hidden_multipliers=hidden_multipliers,
-    
+
     vq_blocks_start=vq_blocks_start,
     n_in_vq_heads=n_in_vq_heads,
     n_in_vq_options=n_in_vq_options,

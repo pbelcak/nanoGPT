@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-lut-118B-6-8x1024-8x1024'
+wandb_run_name='gpt2-lut-B-6-8x1024-8x1024-4'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -39,3 +39,6 @@ log_interval = 10
 
 # weight decay
 weight_decay = 1e-1
+
+# do perform compilation
+compile = True
