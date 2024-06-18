@@ -4,26 +4,29 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-124M-lut-118B-6-4x1024'
+wandb_run_name='gpt2-lut-118B-6-4x1024-4x1024'
 
 # setup out dir
-out_dir = "out/gpt2-lut-118B-6-4x1024"
+out_dir = "out/"+wandb_run_name
 
 # 12 batch size * 1024 block size * 4 gradaccum * 16 GPUs = 786,432
 batch_size = 12
 block_size = 1024
-gradient_accumulation_steps = 4 * 8
+gradient_accumulation_steps = 4 * 16
 
 # model
 n_layer = 12
 n_head = 12
 n_embd = 768
-n_hidden_multiplier = 6
+hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
-bias = False # do we use bias inside LayerNorm and Linear layers?
+bias = False
 vq_blocks_start = 6
-n_vqheads = 4
-n_vqoptions = 1024
+n_in_vq_heads = 8
+n_in_vq_options = 1024
+vq_block_hidden_multipliers: list[int] = [4]
+n_out_vq_heads = 8
+n_out_vq_options = 1024
 
 # this makes total number of tokens be 118B
 max_iters = 150000

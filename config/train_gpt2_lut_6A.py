@@ -4,22 +4,22 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-124M-lut-118B-11-4x1024'
+wandb_run_name='gpt2-lut-118B-6-8x1024-8x1024'
 
 # setup out dir
-out_dir = "out/gpt2-lut-118B-11-4x1024"
+out_dir = "out/"+wandb_run_name
 
 # 12 batch size * 1024 block size * 4 gradaccum * 16 GPUs = 786,432
 batch_size = 12
 block_size = 1024
-gradient_accumulation_steps = 4 * 8
+gradient_accumulation_steps = 4 * 16
 
 # model
 n_layer = 12
 n_head = 12
 n_embd = 768
 hidden_multipliers: list[int] = [4]
-dropout = 0.0
+dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False
 vq_blocks_start = 6
 n_in_vq_heads = 4

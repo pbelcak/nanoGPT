@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+from torch.nn import functional
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -24,7 +24,7 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+        return functional.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 class CausalSelfAttention(nn.Module):
 
@@ -68,7 +68,7 @@ class CausalSelfAttention(nn.Module):
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             if not self.bidirectional_attention:
                 att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
+            att = functional.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
@@ -94,15 +94,17 @@ class MLP(nn.Module):
         return x
 
 class VQizer(nn.Module):
-    def __init__(self, config):
+    def __init__(self, n_embd: int, n_vq_heads: int, n_vq_options: int):
         super().__init__()
         # n_vqheads holds the number of heads to use for vector quantization
         # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
-        self.head_size: int = config.n_embd // config.n_vqheads
-        self.config = config
+        self.n_embd = n_embd
+        self.n_vq_heads = n_vq_heads
+        self.n_vqoptions = n_vq_options
+        self.head_size: int = n_embd // n_vq_heads
 
-        self.vq_head_weights = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, self.head_size))
-        self.vq_codebooks = nn.Parameter(torch.randn(config.n_vqheads, config.n_vqoptions, self.head_size))
+        self.vq_head_weights = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.head_size))
+        self.vq_codebooks = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.head_size))
 
         # temperature
         self.temperature = nn.Parameter(torch.tensor(1.0))
@@ -111,16 +113,16 @@ class VQizer(nn.Module):
         # input shape (batch, seq_len, emb_dim)
         # matmul x and vq_head_weights to get per-head codebook choice logits
         # then apply softmax (with temperature self.t!) to get probabilities
-        x_prepped = x.view(*x.shape[0:2], self.config.n_vqheads, self.head_size)
+        x_prepped = x.view(*x.shape[0:2], self.n_vq_heads, self.head_size)
         logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
         if self.training:
-            probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            probs = functional.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         else:
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
             _, argmax = torch.max(logits, dim=-1)
-            probs = F.one_hot(argmax, num_classes=self.config.n_vqoptions).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            probs = functional.one_hot(argmax, num_classes=self.n_vq_options).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
         # perform soft mixture by matmul of probs and codebooks
         x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
@@ -150,7 +152,7 @@ class FastComponent(nn.Module):
         choice_mixture = torch.ones(x.shape[0:2] + (self.k,) * self.depth, dtype=torch.float, device=x.device)
         for d in range(self.depth):
             choice_logits = self.choice_linears[d](x)
-            choice_probs = F.softmax(choice_logits / self.temperature, dim=-1)
+            choice_probs = functional.softmax(choice_logits / self.temperature, dim=-1)
             choice_mixture *= choice_probs.view(*choice_probs.shape[0:2], *([1] * d + [self.k] + [1] * (self.depth - d-1)))
 
         choice_mixture = choice_mixture.flatten(2) # shape (batch, seq_len, k ** depth)
@@ -189,18 +191,24 @@ class FFFMLP(nn.Module):
 class FancyMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.vq_in   = VQizer(config)
-        self.vq_out  = VQizer(config)
-        self.c_fc    = nn.Linear(config.n_embd, config.n_hidden_multiplier * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(config.n_hidden_multiplier * config.n_embd, config.n_embd, bias=config.bias)
+        self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options)
+        self.vq_out  = VQizer(config.n_embd, config.n_out_vq_heads, config.n_out_vq_options)
+
+        layers = []
+        last_multiplier = 1
+        for multiplier in config.vq_block_hidden_multipliers:
+            layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd * multiplier, bias=config.bias))
+            last_multiplier = multiplier
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd, bias=config.bias))
+        self.mlp = nn.ModuleList(layers)
+        
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.vq_in(x)
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
+        for layer in self.mlp:
+            x = layer(x)
         x = self.vq_out(x)
         x = self.dropout(x)
         return x
@@ -231,13 +239,16 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    n_hidden_multiplier: int = 4
+    hidden_multipliers: list[int] = [4]
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
     vq_blocks_start: int = 1000
-    n_vqheads: int = 4
-    n_vqoptions: int = 64
+    n_in_vq_heads: int = 4
+    n_in_vq_options: int = 1024
+    vq_block_hidden_multipliers: list[int] = [4]
+    n_out_vq_heads: int = 4
+    n_out_vq_options: int = 1024
 
 class GPT(nn.Module):
 
@@ -328,7 +339,7 @@ class GPT(nn.Module):
                 #logits = logits[:, self.config.block_size//2:]
                 #targets = targets[:, self.config.block_size//2:]
                 pass
-            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
+            loss = functional.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
             logits = logits[:, self.config.block_size//2:]
 
         else:
@@ -382,7 +393,7 @@ class GPT(nn.Module):
         # create a from-scratch initialized minGPT model
         config = GPTConfig(**config_args)
         model = GPT(config)
-        sd = model.state_dict()
+        sd: dict = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
 
@@ -473,7 +484,7 @@ class GPT(nn.Module):
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
             # apply softmax to convert logits to (normalized) probabilities
-            probs = F.softmax(logits, dim=-1)
+            probs = functional.softmax(logits, dim=-1)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
