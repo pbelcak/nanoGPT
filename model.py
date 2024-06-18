@@ -9,7 +9,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import math
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 import torch.nn as nn
@@ -100,7 +100,7 @@ class VQizer(nn.Module):
         # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
         self.n_embd = n_embd
         self.n_vq_heads = n_vq_heads
-        self.n_vqoptions = n_vq_options
+        self.n_vq_options = n_vq_options
         self.head_size: int = n_embd // n_vq_heads
 
         self.vq_head_weights = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.head_size))
@@ -239,14 +239,14 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    hidden_multipliers: list[int] = [4]
+    hidden_multipliers: list[int] = field(default_factory=lambda: [4])
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
     vq_blocks_start: int = 1000
     n_in_vq_heads: int = 4
     n_in_vq_options: int = 1024
-    vq_block_hidden_multipliers: list[int] = [4]
+    vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
     n_out_vq_heads: int = 4
     n_out_vq_options: int = 1024
 

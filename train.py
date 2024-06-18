@@ -198,7 +198,14 @@ model_args = dict(
     n_embd=n_embd,
     block_size=block_size,
     bias=bias, vocab_size=None, dropout=dropout,
-    vq_blocks_start=vq_blocks_start, n_vqheads=n_vqheads, n_vqoptions=n_vqoptions
+    hidden_multipliers=hidden_multipliers,
+    
+    vq_blocks_start=vq_blocks_start,
+    n_in_vq_heads=n_in_vq_heads,
+    n_in_vq_options=n_in_vq_options,
+    vq_block_hidden_multipliers=vq_block_hidden_multipliers,
+    n_out_vq_heads=n_out_vq_heads,
+    n_out_vq_options=n_out_vq_options,
 ) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch

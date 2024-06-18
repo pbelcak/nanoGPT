@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-lut-118B-6-4x1024-4x1024'
+wandb_run_name='gpt2-lut-118B-6-8x1024-8x1024'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
