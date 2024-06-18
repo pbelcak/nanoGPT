@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-bidi-118B-f2'
+wandb_run_name='gpt2-bidi-20B-f2'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -22,6 +22,7 @@ distribution_model = True
 warmup_iters = 2000
 max_iters = 100000
 lr_decay_iters = 100000
+learning_rate = 5e-5 # max learning rate
 
 # training
 fmax = 2
@@ -33,3 +34,6 @@ log_interval = 10
 
 # weight decay
 weight_decay = 1e-1
+
+# dont compile
+compile = False
