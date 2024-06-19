@@ -14,6 +14,13 @@ batch_size = 12
 block_size = 1024
 gradient_accumulation_steps = 4 * 16
 
+# lr
+# we had 6e-4 for 0.5M tokens per batch, so let's have 4e-4 for ~0.75M tokens per batch
+learning_rate = 4e-4
+
+# weight decay
+weight_decay = 1e-1
+
 # model
 n_layer = 12
 n_head = 12
@@ -38,9 +45,6 @@ lr_decay_iters = 150000
 eval_interval = 1000
 eval_iters = 200
 log_interval = 10
-
-# weight decay
-weight_decay = 1e-1
 
 # do perform compilation
 compile = True
