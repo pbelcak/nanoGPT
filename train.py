@@ -76,6 +76,7 @@ n_out_vq_heads = 4
 n_out_vq_options = 1024
 temperature_requires_grad = True
 use_temperature = True
+tie_lm_with_embeddings = False
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -198,6 +199,7 @@ model_args = dict(
     temperature_requires_grad=temperature_requires_grad,
     use_temperature=use_temperature,
     freezing_temperature=freezing_temperature,
+    tie_lm_with_embeddings=tie_lm_with_embeddings,
 ) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch

@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-fs-B-6-3x1024-4'
+wandb_run_name='gpt2-fs-C-6-3x1024-4x4'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -13,13 +13,6 @@ out_dir = "out/"+wandb_run_name
 batch_size = 12
 block_size = 1024
 gradient_accumulation_steps = 4 * 16
-
-# lr
-# we had 6e-4 for 0.5M tokens per batch, so let's have 4e-4 for ~0.75M tokens per batch
-learning_rate = 4e-4
-
-# weight decay
-weight_decay = 1e-1
 
 # model
 n_layer = 12
@@ -32,7 +25,8 @@ vq_blocks_start = 6
 vq_block_type = "fs-mlp"
 n_in_vq_heads = 3
 n_in_vq_options = 1024
-vq_block_hidden_multipliers: list[int] = [4]
+vq_block_hidden_multipliers: list[int] = [4,4]
+tie_lm_with_embeddings = True
 
 # temperature
 freezing_temperature = 0.80
@@ -45,6 +39,9 @@ lr_decay_iters = 150000
 eval_interval = 1000
 eval_iters = 200
 log_interval = 10
+
+# weight decay
+weight_decay = 1e-1
 
 # do perform compilation
 compile = True
