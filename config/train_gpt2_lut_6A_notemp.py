@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-lut-D-6-8x1024-8x1024-8'
+wandb_run_name='gpt2-lut-A-6-4x1024-4x1024-4-notemp'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -22,11 +22,13 @@ hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False
 vq_blocks_start = 6
-n_in_vq_heads = 8
+n_in_vq_heads = 4
 n_in_vq_options = 1024
-vq_block_hidden_multipliers: list[int] = [8]
-n_out_vq_heads = 8
+vq_block_hidden_multipliers: list[int] = [4]
+n_out_vq_heads = 4
 n_out_vq_options = 1024
+temperature_requires_grad = False
+use_temperature = False
 
 # this makes total number of tokens be 118B
 max_iters = 150000
@@ -36,6 +38,10 @@ lr_decay_iters = 150000
 eval_interval = 1000
 eval_iters = 200
 log_interval = 10
+
+# temperature
+start_temperature = 1.0
+end_temperature = 0.99
 
 # weight decay
 weight_decay = 1e-1

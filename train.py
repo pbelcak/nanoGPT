@@ -75,6 +75,8 @@ n_in_vq_options = 1024
 vq_block_hidden_multipliers: list[int] = [4]
 n_out_vq_heads = 4
 n_out_vq_options = 1024
+temperature_requires_grad = True
+use_temperature = True
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -98,7 +100,7 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = True # use PyTorch 2.0 to compile the model to be faster
-quick_debug = True
+quick_debug = False
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
@@ -200,6 +202,8 @@ model_args = dict(
     vq_block_hidden_multipliers=vq_block_hidden_multipliers,
     n_out_vq_heads=n_out_vq_heads,
     n_out_vq_options=n_out_vq_options,
+    temperature_requires_grad=temperature_requires_grad,
+    use_temperature=use_temperature,
 ) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
@@ -309,10 +313,8 @@ local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
 while True:
-    # temperature
-    if not eval_only:
-        temperature = config["start_temperature"] + (config["end_temperature"] - config["start_temperature"]) * min(iter_num / max_iters, 1.0)
-        raw_model.set_temperature(temperature)
+    # compute the temperature
+    temperature = config["start_temperature"] + (config["end_temperature"] - config["start_temperature"]) * min(iter_num / max_iters, 1.0)
 
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
@@ -356,6 +358,10 @@ while True:
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16
     for micro_step in range(gradient_accumulation_steps):
+        # set the temperature in each micro_step (in case the temp gradients are set to True)
+        if not eval_only:
+            raw_model.set_temperature(temperature)
+
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but

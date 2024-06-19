@@ -4,10 +4,10 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-124M-vanilla-118B'
+wandb_run_name='gpt2-vanilla-118B'
 
 # setup out dir
-out_dir = "out/gpt2-vanilla-118B"
+out_dir = "out/"+wandb_run_name
 
 # 12 batch size * 1024 block size * 4 gradaccum * 16 GPUs = 786,432
 batch_size = 12

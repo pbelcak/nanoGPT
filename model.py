@@ -94,7 +94,7 @@ class MLP(nn.Module):
         return x
 
 class VQizer(nn.Module):
-    def __init__(self, n_embd: int, n_vq_heads: int, n_vq_options: int):
+    def __init__(self, n_embd: int, n_vq_heads: int, n_vq_options: int, temperature_requires_grad: bool = True, use_temperature: bool = True):
         super().__init__()
         # n_vqheads holds the number of heads to use for vector quantization
         # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
@@ -107,7 +107,8 @@ class VQizer(nn.Module):
         self.vq_codebooks = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.head_size))
 
         # temperature
-        self.temperature = nn.Parameter(torch.tensor(1.0))
+        self.temperature = nn.Parameter(torch.tensor(1.0), requires_grad=temperature_requires_grad)
+        self.use_temperature = use_temperature
 
     def forward(self, x: torch.Tensor):
         # input shape (batch, seq_len, emb_dim)
@@ -117,7 +118,10 @@ class VQizer(nn.Module):
         logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
         if self.training:
-            probs = functional.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            if self.use_temperature:
+                probs = functional.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            else:
+                probs = functional.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         else:
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
@@ -173,26 +177,11 @@ class FastMLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class FFFMLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
-
 class FancyMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options)
-        self.vq_out  = VQizer(config.n_embd, config.n_out_vq_heads, config.n_out_vq_options)
+        self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature)
+        self.vq_out  = VQizer(config.n_embd, config.n_out_vq_heads, config.n_out_vq_options, config.temperature_requires_grad, config.use_temperature)
 
         layers = []
         last_multiplier = 1
@@ -244,11 +233,14 @@ class GPTConfig:
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
     vq_blocks_start: int = 1000
+    vq_block_type: str = "fancy" # "fancy" or "fs-mlp" at the moment
     n_in_vq_heads: int = 4
     n_in_vq_options: int = 1024
     vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
     n_out_vq_heads: int = 4
     n_out_vq_options: int = 1024
+    temperature_requires_grad: bool = True
+    use_temperature: bool = True
 
 class GPT(nn.Module):
 
@@ -350,7 +342,7 @@ class GPT(nn.Module):
         return logits, loss
 
     def set_temperature(self, temperature: float):
-        # set the temperature parameter in the VQizer modules to 1.0
+        # set the temperature parameter in the VQizer modules to temperature
         for m in self.modules():
             if isinstance(m, VQizer) or isinstance(m, FastComponent):
                 m.temperature.data.fill_(temperature)

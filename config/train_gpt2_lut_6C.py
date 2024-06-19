@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-lut-C-6-8x1024-8x1024-8'
+wandb_run_name='gpt2-lut-C-6-4x1024-4x1024-8'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -22,10 +22,10 @@ hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False
 vq_blocks_start = 6
-n_in_vq_heads = 8
+n_in_vq_heads = 4
 n_in_vq_options = 1024
 vq_block_hidden_multipliers: list[int] = [8]
-n_out_vq_heads = 8
+n_out_vq_heads = 4
 n_out_vq_options = 1024
 
 # this makes total number of tokens be 118B
