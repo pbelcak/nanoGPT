@@ -253,7 +253,6 @@ class GPTConfig:
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     bidirectional_attention: bool = False
-    distribution_model: bool = False
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
@@ -280,14 +279,8 @@ class GPT(nn.Module):
         assert config.block_size is not None
         self.config = config
 
-        wtel: nn.Module
-        if config.distribution_model:
-            wtel = nn.Linear(config.vocab_size, config.n_embd)
-        else:
-            wtel = nn.Embedding(config.vocab_size, config.n_embd)
-
         self.transformer = nn.ModuleDict(dict(
-            wte = wtel,
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
@@ -332,23 +325,14 @@ class GPT(nn.Module):
 
     def forward(self, input, targets=None):
         device = input.device
-        if self.config.distribution_model:
-            if len(input.shape) == 2:
-                input = torch.nn.functional.one_hot(input, num_classes=self.config.vocab_size).float()
-                input[:, self.config.block_size//2:, :] = 1.0/self.config.vocab_size
-            b, t, v = input.size()
-        else:
-            b, t = input.size()
+        b, t = input.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(input) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        if not self.config.use_positional_embeddings:
-            x = self.transformer.drop(tok_emb)
-        else:
-            x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -356,13 +340,7 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            if self.config.distribution_model:
-                # cut the first half from both logits and targets
-                logits = logits[:, self.config.block_size//2:]
-                targets = targets[:, self.config.block_size//2:]
-                pass
             loss = functional.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
-            logits = logits[:, self.config.block_size//2:]
 
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position

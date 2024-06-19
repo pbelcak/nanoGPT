@@ -64,7 +64,6 @@ use_positional_embeddings = True
 n_layer = 12
 n_head = 12
 bidirectional_attention = False
-distribution_model = False
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
@@ -89,8 +88,6 @@ decay_lr = True # whether to decay the learning rate
 warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-# multiple fwd pass setting
-fmax: int = 1
 # temperature setup
 start_temperature = 1.0
 end_temperature = 0.01
@@ -160,11 +157,7 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
-    shift: int
-    if distribution_model:
-        shift = 0
-    else:
-        shift = 1
+    shift: int = 1
     y = torch.stack([torch.from_numpy((data[i+shift:i+shift+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
@@ -189,7 +182,6 @@ if os.path.exists(meta_path):
 # model init
 model_args = dict(
     bidirectional_attention=bidirectional_attention,
-    distribution_model=distribution_model,
     n_layer=n_layer,
     n_head=n_head,
     n_embd=n_embd,
