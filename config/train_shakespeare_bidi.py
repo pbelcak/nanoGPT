@@ -36,5 +36,5 @@ fmax = 3
 
 warmup_iters = 100 # not super necessary potentially
 
-compile = False # do not torch compile the model
 quick_debug = True
+compile = False # do not torch compile the model

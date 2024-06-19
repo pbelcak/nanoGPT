@@ -94,6 +94,7 @@ fmax: int = 1
 # temperature setup
 start_temperature = 1.0
 end_temperature = 0.01
+freezing_temperature = 0.00
 # DDP settings
 backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
@@ -204,6 +205,7 @@ model_args = dict(
     n_out_vq_options=n_out_vq_options,
     temperature_requires_grad=temperature_requires_grad,
     use_temperature=use_temperature,
+    freezing_temperature=freezing_temperature,
 ) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch

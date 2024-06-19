@@ -24,8 +24,12 @@ n_head = 6
 n_embd = 384
 dropout = 0.2
 vq_blocks_start = 3
-n_vqheads = 4
-n_vqoptions = 256
+hidden_multipliers: list[int] = [4]
+bias = False
+vq_block_type = "fs-mlp"
+n_in_vq_heads = 3
+n_in_vq_options = 256
+vq_block_hidden_multipliers: list[int] = [4,4]
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher
 max_iters = 10000
@@ -38,8 +42,9 @@ warmup_iters = 100 # not super necessary potentially
 # temperature setup
 start_temperature = 1.0
 end_temperature = 0.01
+freezing_temperature = 0.80
 
 # on macbook also add
 # device = 'cpu'  # run on cpu only
 quick_debug = True
-compile = True # do not torch compile the model
+compile = False # do not torch compile the model

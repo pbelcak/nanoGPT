@@ -109,6 +109,7 @@ class VQizer(nn.Module):
         # temperature
         self.temperature = nn.Parameter(torch.tensor(1.0), requires_grad=temperature_requires_grad)
         self.use_temperature = use_temperature
+        self.is_frozen = False
 
     def forward(self, x: torch.Tensor):
         # input shape (batch, seq_len, emb_dim)
@@ -117,7 +118,7 @@ class VQizer(nn.Module):
         x_prepped = x.view(*x.shape[0:2], self.n_vq_heads, self.head_size)
         logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
-        if self.training:
+        if self.training and not self.is_frozen:
             if self.use_temperature:
                 probs = functional.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
             else:
@@ -202,6 +203,29 @@ class FancyMLP(nn.Module):
         x = self.dropout(x)
         return x
 
+class FSMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature)
+
+        layers = []
+        last_multiplier = 1
+        for multiplier in config.vq_block_hidden_multipliers:
+            layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd * multiplier, bias=config.bias))
+            last_multiplier = multiplier
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd, bias=config.bias))
+        self.mlp = nn.ModuleList(layers)
+        
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.vq_in(x)
+        for layer in self.mlp:
+            x = layer(x)
+        x = self.dropout(x)
+        return x
+
 class Block(nn.Module):
     def __init__(self, config, i: int):
         super().__init__()
@@ -209,7 +233,12 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         if hasattr(config, 'vq_blocks_start') and i >= config.vq_blocks_start:
-            self.mlp = FancyMLP(config)
+            if config.vq_block_type == "fancy":
+                self.mlp = FancyMLP(config)
+            elif config.vq_block_type == "fs-mlp":
+                self.mlp = FSMLP(config)
+            else:
+                raise ValueError(f"Unknown VQ block type: {config.vq_block_type}")
         else:
             self.mlp = MLP(config)
 
@@ -241,6 +270,7 @@ class GPTConfig:
     n_out_vq_options: int = 1024
     temperature_requires_grad: bool = True
     use_temperature: bool = True
+    freezing_temperature: float = 0.0
 
 class GPT(nn.Module):
 
@@ -346,6 +376,9 @@ class GPT(nn.Module):
         for m in self.modules():
             if isinstance(m, VQizer) or isinstance(m, FastComponent):
                 m.temperature.data.fill_(temperature)
+
+                if temperature <= self.config.freezing_temperature:
+                    m.is_frozen = True
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
