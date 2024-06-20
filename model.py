@@ -36,7 +36,6 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
-        self.bidirectional_attention = config.bidirectional_attention
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
@@ -62,12 +61,11 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=not self.bidirectional_attention)
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            if not self.bidirectional_attention:
-                att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = functional.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -249,10 +247,8 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    use_positional_embeddings: bool = True
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    bidirectional_attention: bool = False
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
@@ -270,7 +266,6 @@ class GPTConfig:
     temperature_requires_grad: bool = True
     use_temperature: bool = True
     freezing_temperature: float = 0.0
-    tie_lm_with_embeddings: bool = False
 
 class GPT(nn.Module):
 
@@ -292,8 +287,7 @@ class GPT(nn.Module):
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        if config.tie_lm_with_embeddings:
-            self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
 
         # init all weights
         self.apply(self._init_weights)
@@ -359,6 +353,7 @@ class GPT(nn.Module):
 
                 if temperature <= self.config.freezing_temperature:
                     m.is_frozen = True
+                    m.temperature.requires_grad = False
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

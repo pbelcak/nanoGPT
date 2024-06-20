@@ -60,10 +60,8 @@ gradient_accumulation_steps = 4 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 # model
-use_positional_embeddings = True
 n_layer = 12
 n_head = 12
-bidirectional_attention = False
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
@@ -76,7 +74,6 @@ n_out_vq_heads = 4
 n_out_vq_options = 1024
 temperature_requires_grad = True
 use_temperature = True
-tie_lm_with_embeddings = False
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -182,7 +179,6 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(
-    bidirectional_attention=bidirectional_attention,
     n_layer=n_layer,
     n_head=n_head,
     n_embd=n_embd,
@@ -199,7 +195,6 @@ model_args = dict(
     temperature_requires_grad=temperature_requires_grad,
     use_temperature=use_temperature,
     freezing_temperature=freezing_temperature,
-    tie_lm_with_embeddings=tie_lm_with_embeddings,
 ) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
