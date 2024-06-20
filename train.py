@@ -72,8 +72,6 @@ n_in_vq_options = 1024
 vq_block_hidden_multipliers: list[int] = [4]
 n_out_vq_heads = 4
 n_out_vq_options = 1024
-temperature_requires_grad = True
-use_temperature = True
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -87,6 +85,8 @@ warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # temperature setup
+use_temperature = True
+temperature_requires_grad = False
 start_temperature = 1.0
 end_temperature = 0.01
 freezing_temperature = 0.00
