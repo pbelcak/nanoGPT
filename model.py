@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import torch
 import torch.nn as nn
-from torch.nn import functional
+from torch.nn import functional as F
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -24,7 +24,7 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
-        return functional.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 class CausalSelfAttention(nn.Module):
 
@@ -61,12 +61,12 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            y = torch.nn.F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = functional.softmax(att, dim=-1)
+            att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
@@ -118,14 +118,14 @@ class VQizer(nn.Module):
         
         if self.training and not self.is_frozen:
             if self.use_temperature:
-                probs = functional.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+                probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
             else:
-                probs = functional.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+                probs = F.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         else:
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
             _, argmax = torch.max(logits, dim=-1)
-            probs = functional.one_hot(argmax, num_classes=self.n_vq_options).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            probs = F.one_hot(argmax, num_classes=self.n_vq_options).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
         # perform soft mixture by matmul of probs and codebooks
         x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
@@ -155,7 +155,7 @@ class FastComponent(nn.Module):
         choice_mixture = torch.ones(x.shape[0:2] + (self.k,) * self.depth, dtype=torch.float, device=x.device)
         for d in range(self.depth):
             choice_logits = self.choice_linears[d](x)
-            choice_probs = functional.softmax(choice_logits / self.temperature, dim=-1)
+            choice_probs = F.softmax(choice_logits / self.temperature, dim=-1)
             choice_mixture *= choice_probs.view(*choice_probs.shape[0:2], *([1] * d + [self.k] + [1] * (self.depth - d-1)))
 
         choice_mixture = choice_mixture.flatten(2) # shape (batch, seq_len, k ** depth)
@@ -319,14 +319,14 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input, targets=None):
-        device = input.device
-        b, t = input.size()
+    def forward(self, idx, targets=None):
+        device = idx.device
+        b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(input) # token embeddings of shape (b, t, n_embd)
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
@@ -336,7 +336,7 @@ class GPT(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = functional.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
 
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
@@ -393,7 +393,7 @@ class GPT(nn.Module):
         # create a from-scratch initialized minGPT model
         config = GPTConfig(**config_args)
         model = GPT(config)
-        sd: dict = model.state_dict()
+        sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
 
@@ -484,7 +484,7 @@ class GPT(nn.Module):
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
             # apply softmax to convert logits to (normalized) probabilities
-            probs = functional.softmax(logits, dim=-1)
+            probs = F.softmax(logits, dim=-1)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
