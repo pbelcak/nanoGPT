@@ -184,7 +184,7 @@ class FastMLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class FancyMLP(nn.Module):
+class LutificationMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature)
@@ -232,6 +232,48 @@ class FSMLP(nn.Module):
         x = self.dropout(x)
         return x
 
+class BitMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        layers = []
+        last_multiplier = 1
+        for multiplier in config.vq_block_hidden_multipliers:
+            layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd * multiplier, bias=config.bias))
+            last_multiplier = multiplier
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd, bias=config.bias))
+        self.mlp = nn.ModuleList(layers)
+        
+        self.dropout = nn.Dropout(config.dropout)
+
+        # temperature
+        self.temperature = nn.Parameter(torch.tensor(1.0), requires_grad=config.temperature_requires_grad)
+        self.use_temperature = config.use_temperature
+        self.is_frozen = False
+
+    def freeze(self):
+        self.is_frozen = True
+
+    def forward(self, x):
+        if self.training:
+            if self.use_temperature:
+                sigms = F.sigmoid(x / self.temperature)
+            else:
+                sigms = F.sigmoid(x)
+
+            if self.is_frozen:
+                sigms_rounded = torch.round(sigms)
+                sigms = sigms_rounded + sigms - sigms.detach()
+        else:
+            sigms = (x > 0).to(dtype=x.dtype)
+
+        x = sigms
+        for layer in self.mlp:
+            x = layer(x)
+        x = self.dropout(x)
+        return x
+
 class Block(nn.Module):
     def __init__(self, config, i: int):
         super().__init__()
@@ -243,12 +285,14 @@ class Block(nn.Module):
         self.i = i
         if i >= config.vq_blocks_start:
             if config.vq_block_type == "fancy":
-                self.mlp = FancyMLP(config)
+                self.mlp = LutificationMLP(config)
             elif config.vq_block_type == "fs-mlp":
                 self.mlp = FSMLP(config)
             elif config.vq_block_type == "no-mlp":
                 self.ln_2 = nn.Identity()
                 self.mlp = nn.Identity()
+            elif config.vq_block_type == "bit-mlp":
+                self.mlp = BitMLP(config)
             else:
                 raise ValueError(f"Unknown VQ block type: {config.vq_block_type}")
         else:
@@ -276,7 +320,7 @@ class GPTConfig:
 
     # vq
     vq_blocks_start: int = 1000
-    vq_block_type: str = "fancy" # "fancy", "fs-mlp", or "no-mlp" at the moment
+    vq_block_type: str = "fancy" # "fancy", "fs-mlp", "bit-mlp", or "no-mlp" at the moment
     n_in_vq_heads: int = 4
     n_in_vq_options: int = 1024
     vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
@@ -285,7 +329,7 @@ class GPTConfig:
 
     # temperature
     use_temperature: bool = True
-    temperature_requires_grad: bool = True
+    temperature_requires_grad: bool = False
     freezing_temperature: float = 0.0
 
 class GPT(nn.Module):
@@ -369,7 +413,7 @@ class GPT(nn.Module):
     def set_temperature(self, temperature: float):
         # set the temperature parameter in the VQizer modules to temperature
         for m in self.modules():
-            if isinstance(m, VQizer) or isinstance(m, FastComponent):
+            if isinstance(m, VQizer) or isinstance(m, FastComponent) or isinstance(m, BitMLP):
                 if temperature <= self.config.freezing_temperature:
                     m.freeze()
                     m.temperature.data.fill_(self.config.freezing_temperature)
