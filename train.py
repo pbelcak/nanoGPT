@@ -63,10 +63,12 @@ block_size = 1024
 n_layer = 12
 n_head = 12
 n_embd = 768
+hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
-hidden_multipliers: list[int] = [4]
+# model vq setup
 vq_blocks_start = 1000
+vq_block_type: str = "fancy"
 n_in_vq_heads = 4
 n_in_vq_options = 1024
 vq_block_hidden_multipliers: list[int] = [4]
@@ -182,18 +184,22 @@ model_args = dict(
     n_layer=n_layer,
     n_head=n_head,
     n_embd=n_embd,
-    block_size=block_size,
-    bias=bias, vocab_size=None, dropout=dropout,
     hidden_multipliers=hidden_multipliers,
+    block_size=block_size,
+    bias=bias,
+    vocab_size=None,
+    dropout=dropout,
 
     vq_blocks_start=vq_blocks_start,
+    vq_block_type=vq_block_type,
     n_in_vq_heads=n_in_vq_heads,
     n_in_vq_options=n_in_vq_options,
     vq_block_hidden_multipliers=vq_block_hidden_multipliers,
     n_out_vq_heads=n_out_vq_heads,
     n_out_vq_options=n_out_vq_options,
-    temperature_requires_grad=temperature_requires_grad,
+
     use_temperature=use_temperature,
+    temperature_requires_grad=temperature_requires_grad,
     freezing_temperature=freezing_temperature,
 ) # start with model_args from command line
 if init_from == 'scratch':

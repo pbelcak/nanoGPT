@@ -109,6 +109,11 @@ class VQizer(nn.Module):
         self.use_temperature = use_temperature
         self.is_frozen = False
 
+    def freeze(self):
+        self.is_frozen = True
+        self.temperature.requires_grad = False
+        self.vq_head_weights.requires_grad = False
+
     def forward(self, x: torch.Tensor):
         # input shape (batch, seq_len, emb_dim)
         # matmul x and vq_head_weights to get per-head codebook choice logits
@@ -125,7 +130,7 @@ class VQizer(nn.Module):
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
             _, argmax = torch.max(logits, dim=-1)
-            probs = F.one_hot(argmax, num_classes=self.n_vq_options).float().to(x.device) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
         # perform soft mixture by matmul of probs and codebooks
         x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
@@ -247,6 +252,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
+    # general
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
@@ -256,6 +262,7 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
+    # vq
     vq_blocks_start: int = 1000
     vq_block_type: str = "fancy" # "fancy" or "fs-mlp" at the moment
     n_in_vq_heads: int = 4
@@ -263,8 +270,10 @@ class GPTConfig:
     vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
     n_out_vq_heads: int = 4
     n_out_vq_options: int = 1024
-    temperature_requires_grad: bool = True
+
+    # temperature
     use_temperature: bool = True
+    temperature_requires_grad: bool = True
     freezing_temperature: float = 0.0
 
 class GPT(nn.Module):
@@ -352,8 +361,7 @@ class GPT(nn.Module):
                 m.temperature.data.fill_(temperature)
 
                 if temperature <= self.config.freezing_temperature:
-                    m.is_frozen = True
-                    m.temperature.requires_grad = False
+                    m.freeze()
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

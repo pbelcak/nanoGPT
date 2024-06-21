@@ -45,3 +45,6 @@ lr_decay_iters = 150000
 eval_interval = 1000
 eval_iters = 200
 log_interval = 10
+
+# compilation
+compile = False
