@@ -1,6 +1,6 @@
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-fs-C-6-3x1024-4'
+wandb_run_name='gpt2-fs-H-6-3x1024-4'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -28,14 +28,14 @@ vq_blocks_start = 6
 vq_block_type = "fs-mlp"
 n_in_vq_heads = 3
 n_in_vq_options = 1024
-vq_block_hidden_multipliers: list[int] = [4]
+vq_block_hidden_multipliers: list[int] = [4,4]
 
 # temperature
-use_temperature = True
+use_temperature = False
 temperature_requires_grad = False
 start_temperature = 1.0
-end_temperature = 0.05
-freezing_temperature = 0.91
+end_temperature = 0.90
+freezing_temperature = 0.00
 
 # this makes total number of tokens be 118B
 max_iters = 150000
@@ -45,6 +45,3 @@ lr_decay_iters = 150000
 eval_interval = 1000
 eval_iters = 200
 log_interval = 10
-
-# compilation
-compile = False

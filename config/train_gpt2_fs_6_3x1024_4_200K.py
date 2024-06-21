@@ -1,6 +1,6 @@
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-fs-C-6-3x1024-4'
+wandb_run_name='gpt2-fs-3x1024-4-proper-200K'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -38,8 +38,8 @@ end_temperature = 0.05
 freezing_temperature = 0.91
 
 # this makes total number of tokens be 118B
-max_iters = 150000
-lr_decay_iters = 150000
+max_iters = 200000
+lr_decay_iters = 200000
 
 # eval stuff
 eval_interval = 1000

@@ -234,6 +234,7 @@ elif init_from == 'resume' or init_from == 'eval_ckpt':
     model.load_state_dict(state_dict)
     iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
     temperature = checkpoint['curr_temperature']
+    model.set_temperature(temperature)
     best_val_loss = checkpoint['best_val_loss']
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")

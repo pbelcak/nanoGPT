@@ -1,6 +1,6 @@
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-fs-C-6-3x1024-4'
+wandb_run_name='gpt2-fs-4x256-4-proper'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -26,8 +26,8 @@ dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False
 vq_blocks_start = 6
 vq_block_type = "fs-mlp"
-n_in_vq_heads = 3
-n_in_vq_options = 1024
+n_in_vq_heads = 4
+n_in_vq_options = 256
 vq_block_hidden_multipliers: list[int] = [4]
 
 # temperature
@@ -35,7 +35,7 @@ use_temperature = True
 temperature_requires_grad = False
 start_temperature = 1.0
 end_temperature = 0.05
-freezing_temperature = 0.91
+freezing_temperature = 0.90
 
 # this makes total number of tokens be 118B
 max_iters = 150000

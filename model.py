@@ -111,8 +111,6 @@ class VQizer(nn.Module):
 
     def freeze(self):
         self.is_frozen = True
-        self.temperature.requires_grad = False
-        self.vq_head_weights.requires_grad = False
 
     def forward(self, x: torch.Tensor):
         # input shape (batch, seq_len, emb_dim)
@@ -121,11 +119,16 @@ class VQizer(nn.Module):
         x_prepped = x.view(*x.shape[0:2], self.n_vq_heads, self.head_size)
         logits = torch.einsum('bsha,hoa->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
-        if self.training and not self.is_frozen:
+        if self.training:
             if self.use_temperature:
                 probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
             else:
                 probs = F.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+
+            if self.is_frozen:
+                _, argmax = torch.max(logits, dim=-1)
+                hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+                probs = hard_probs + probs - probs.detach()
         else:
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
@@ -235,11 +238,17 @@ class Block(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        if hasattr(config, 'vq_blocks_start') and i >= config.vq_blocks_start:
+
+        self.config = config
+        self.i = i
+        if i >= config.vq_blocks_start:
             if config.vq_block_type == "fancy":
                 self.mlp = FancyMLP(config)
             elif config.vq_block_type == "fs-mlp":
                 self.mlp = FSMLP(config)
+            elif config.vq_block_type == "no-mlp":
+                self.ln_2 = nn.Identity()
+                self.mlp = nn.Identity()
             else:
                 raise ValueError(f"Unknown VQ block type: {config.vq_block_type}")
         else:
@@ -247,8 +256,11 @@ class Block(nn.Module):
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
+        if self.i >= self.config.vq_blocks_start and self.config.vq_block_type == "no-mlp":
+            return x
+        else:
+            x = x + self.mlp(self.ln_2(x))
+            return x
 
 @dataclass
 class GPTConfig:
@@ -264,7 +276,7 @@ class GPTConfig:
 
     # vq
     vq_blocks_start: int = 1000
-    vq_block_type: str = "fancy" # "fancy" or "fs-mlp" at the moment
+    vq_block_type: str = "fancy" # "fancy", "fs-mlp", or "no-mlp" at the moment
     n_in_vq_heads: int = 4
     n_in_vq_options: int = 1024
     vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
@@ -358,10 +370,11 @@ class GPT(nn.Module):
         # set the temperature parameter in the VQizer modules to temperature
         for m in self.modules():
             if isinstance(m, VQizer) or isinstance(m, FastComponent):
-                m.temperature.data.fill_(temperature)
-
                 if temperature <= self.config.freezing_temperature:
                     m.freeze()
+                    m.temperature.data.fill_(self.config.freezing_temperature)
+                else:
+                    m.temperature.data.fill_(temperature)
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

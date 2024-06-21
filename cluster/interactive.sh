@@ -5,13 +5,19 @@ cd $NANO
 source cluster/prepare_job.sh
 source cluster/secrets.sh
 
-PROJECT_PATH=$PB/nanoGPT
+PROJECT_PATH=$NANO
 
 # interactive train lut run
 I=0
 JOB_NAME=train_lut_6A_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/train_gpt2_lut_6A.py
+
+# interactive train fs run
+I=0
+JOB_NAME=train_fs_6A_$I
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/train_gpt2_fs_6C.py
 
 # interactive bidi
 I=0
