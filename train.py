@@ -299,17 +299,20 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
-# logging
-if wandb_log and master_process:
-    import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True, dir=out_dir)
-
-# training loop
+# training loop setup
 X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
+
+# logging
+if wandb_log and master_process:
+    import wandb
+    wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True, dir=out_dir)
+    #wandb.watch(raw_model, log='all', log_freq=10)
+
+# the loop
 while True:
     # compute the temperature
     temperature = config["start_temperature"] + (config["end_temperature"] - config["start_temperature"]) * min(iter_num / max_iters, 1.0)

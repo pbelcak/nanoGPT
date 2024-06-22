@@ -17,6 +17,21 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
+class SigmoidMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.act     = nn.Sigmoid()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.act(x) - 0.5
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
 class RailMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -27,35 +42,136 @@ class RailMLP(nn.Module):
         self.rails_per_embd = config.n_embd // self.rail_width
         self.hidden_multiplier = config.vq_block_hidden_multipliers[0]
 
-        self.rail_maker = nn.Parameter(torch.randn(self.n_heads, self.rails_per_embd, self.rail_width, self.rail_width)*0.02)
-        self.rail_up_proj = nn.Parameter(torch.randn(self.n_heads, self.rails_per_embd, self.rail_width * self.hidden_multiplier, self.rail_width)*0.02)
+        self.rail_maker = nn.Conv1d(
+            config.n_embd,
+            self.rails_per_embd * self.rail_width * self.n_heads,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=self.rails_per_embd
+        )
+        self.rail_up_proj = nn.Conv1d(
+            self.rails_per_embd * self.rail_width * self.n_heads,
+            self.rails_per_embd * self.rail_width * self.hidden_multiplier * self.n_heads,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=self.rails_per_embd * self.n_heads
+        )
+        self.rail_up_proj = None
        
-        self.c_proj = nn.Linear(config.n_embd * self.hidden_multiplier * self.n_heads, config.n_embd, bias=config.bias)
+        # self.c_proj = nn.Linear(config.n_embd * self.hidden_multiplier * self.n_heads, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd * self.n_heads, config.n_embd, bias=config.bias)
 
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         # x has shape (batch, block_size, n_embd)
         # first make the rails with rail_maker
-        x = x.view(*x.shape[0:2], 1, self.rails_per_embd, self.rail_width, 1) # (batch, block_size, 1, rails_per_embd, rail_width, 1)
-        x = x.expand(-1, -1, self.n_heads, -1, -1, self.rail_width) # (batch, block_size, n_heads, rails_per_embd, rail_width, rail_width)
+        x = x.transpose(1, 2) # (batch, n_embd, block_size)
 
-        pointwise = x * self.rail_maker # (batch, block_size, n_heads, rails_per_embd, rail_width, rail_width)
-        x = pointwise.sum(-2, keepdim=True) # (batch, block_size, n_heads, rails_per_embd, 1, rail_width)
+        x = self.rail_maker(x) # (batch, n_heads * rails_per_embd * rail_width, block_size)
+        # x = self.rail_up_proj(x) # (batch, n_heads * rails_per_embd * rail_width * hidden_multiplier, block_size)
+        x = F.gelu(x) # (batch, n_heads * rails_per_embd * rail_width * hidden_multiplier, block_size)
+        x = x.transpose(1, 2) # (batch, block_size, n_heads * rails_per_embd * rail_width * hidden_multiplier)
 
-        # then project up to the hidden multiplier width
-        x = x.expand(-1, -1, -1, -1, self.rail_width * self.hidden_multiplier, -1) # (batch, block_size, n_heads, rails_per_embd, rail_width * hidden_multiplier, rail_width)
-        pointwise = x * self.rail_up_proj # (batch, block_size, n_heads, rails_per_embd, rail_width * hidden_multiplier, rail_width)
-        x = pointwise.sum(-1) # (batch, block_size, n_heads, rails_per_embd, rail_width * hidden_multiplier)
-        x = x.flatten(-3) # (batch, block_size, n_heads * n_embd * hidden_multiplier) because rails_per_embd * rail_width = n_embd
-
-        x = F.gelu(x)
-
-        x = self.c_proj(x)
-        # x has shape (batch, block_size, n_embd)
+        x = self.c_proj(x) # (batch, block_size, n_embd)
 
         x = self.dropout(x)
         return x
+
+class DebugRailMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.n_heads = config.n_in_vq_heads
+        assert len(config.vq_block_hidden_multipliers) == 1
+        
+        self.rail_width: int = 16
+        self.rails_per_embd = config.n_embd // self.rail_width
+        self.hidden_multiplier = config.vq_block_hidden_multipliers[0]
+
+        self.rail_maker = nn.Conv1d(
+            config.n_embd,
+            self.rails_per_embd * self.rail_width * self.n_heads,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=self.rails_per_embd,
+            bias=config.bias,
+        )
+        self.rail_up_proj = nn.Conv1d(
+            self.rails_per_embd * self.rail_width * self.n_heads,
+            self.rails_per_embd * self.rail_width * self.hidden_multiplier * self.n_heads,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=self.rails_per_embd * self.n_heads,
+            bias=config.bias,
+        )
+        self.rail_up_proj = None
+       
+        # self.c_proj = nn.Linear(config.n_embd * self.hidden_multiplier * self.n_heads, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd * self.n_heads, config.n_embd, bias=config.bias)
+
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x: torch.Tensor):
+        # x has shape (batch, block_size, n_embd)
+        # first make the rails with rail_maker
+        x = x.transpose(1, 2) # (batch, n_embd, block_size)
+
+        x = self.rail_maker(x) * self.rails_per_embd # (batch, n_heads * rails_per_embd * rail_width, block_size)
+        x = F.gelu(x) # (batch, n_heads * rails_per_embd * rail_width * hidden_multiplier, block_size)
+        x = x.transpose(1, 2) # (batch, block_size, n_heads * rails_per_embd * rail_width * hidden_multiplier)
+
+        x = self.c_proj(x) # (batch, block_size, n_embd)
+
+        x = self.dropout(x)
+        return x
+
+class SigmoidRailMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.n_heads = config.n_in_vq_heads
+        assert len(config.vq_block_hidden_multipliers) == 1
+        
+        self.rail_width: int = 16
+        self.rails_per_embd = config.n_embd // self.rail_width
+        self.hidden_multiplier = config.vq_block_hidden_multipliers[0]
+
+        self.rail_maker = nn.Conv1d(
+            config.n_embd,
+            self.rails_per_embd * self.rail_width * self.n_heads,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            bias=config.bias,
+        )
+       
+        self.c_proj = nn.Linear(config.n_embd * self.n_heads, config.n_embd, bias=config.bias)
+
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x: torch.Tensor):
+        # x has shape (batch, block_size, n_embd)
+        # first make the rails with rail_maker
+        x = x.transpose(1, 2) # (batch, n_embd, block_size)
+
+        x = self.rail_maker(x) # (batch, n_heads * rails_per_embd * rail_width, block_size)
+        x = F.sigmoid(x) - 0.5 # (batch, n_heads * rails_per_embd * rail_width * hidden_multiplier, block_size)
+        x = x.transpose(1, 2) # (batch, block_size, n_heads * rails_per_embd * rail_width * hidden_multiplier)
+
+        x = self.c_proj(x) # (batch, block_size, n_embd)
+
+        x = self.dropout(x)
+        return x
+
 
 class VQizer(nn.Module):
     def __init__(self, n_embd: int, n_vq_heads: int, n_vq_options: int, temperature_requires_grad: bool = True, use_temperature: bool = True):
@@ -195,6 +311,31 @@ class FSMLP(nn.Module):
         x = self.vq_in(x)
         for layer in self.mlp:
             x = layer(x)
+        x = self.dropout(x)
+        return x
+
+class FSONMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.vq_in   = VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature)
+
+        layers = []
+        last_multiplier = 1
+        for multiplier in config.vq_block_hidden_multipliers:
+            layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd * multiplier, bias=config.bias))
+            last_multiplier = multiplier
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(config.n_embd * last_multiplier, config.n_embd, bias=config.bias))
+        self.mlp = nn.ModuleList(layers)
+        self.on = nn.LayerNorm(config.n_embd)
+        
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.vq_in(x)
+        for layer in self.mlp:
+            x = layer(x)
+        x = self.on(x)
         x = self.dropout(x)
         return x
 

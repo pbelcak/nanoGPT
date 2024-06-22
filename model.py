@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from mlps import MLP, BitMLP, VQizer, LutificationMLP, FSMLP, FastComponent, RailMLP
+from mlps import MLP, BitMLP, VQizer, LutificationMLP, FSMLP, FastComponent, RailMLP, DebugRailMLP, SigmoidRailMLP, FSONMLP, SigmoidMLP
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -89,8 +89,12 @@ class Block(nn.Module):
         if i >= config.vq_blocks_start:
             if config.vq_block_type == "fancy":
                 self.mlp = LutificationMLP(config)
+            elif config.vq_block_type == "sigmoid-mlp":
+                self.mlp = SigmoidMLP(config)
             elif config.vq_block_type == "fs-mlp":
                 self.mlp = FSMLP(config)
+            elif config.vq_block_type == "fson-mlp":
+                self.mlp = FSONMLP(config)
             elif config.vq_block_type == "no-mlp":
                 self.ln_2 = nn.Identity()
                 self.mlp = nn.Identity()
@@ -98,6 +102,10 @@ class Block(nn.Module):
                 self.mlp = BitMLP(config)
             elif config.vq_block_type == "rail-mlp":
                 self.mlp = RailMLP(config)
+            elif config.vq_block_type == "debug-rail-mlp":
+                self.mlp = DebugRailMLP(config)
+            elif config.vq_block_type == "sigmoid-rail-mlp":
+                self.mlp = SigmoidRailMLP(config)
             else:
                 raise ValueError(f"Unknown VQ block type: {config.vq_block_type}")
         else:
@@ -181,7 +189,7 @@ class GPT(nn.Module):
         return n_params
 
     def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
+        if isinstance(module, nn.Linear) or isinstance(module, nn.Conv1d):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
