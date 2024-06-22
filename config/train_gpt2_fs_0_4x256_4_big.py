@@ -35,7 +35,7 @@ use_temperature = False
 temperature_requires_grad = False
 start_temperature = 1.0
 end_temperature = 0.05
-freezing_temperature = 0.90
+freezing_temperature = 1.0
 
 # this makes total number of tokens be 295B
 max_iters = 150000
