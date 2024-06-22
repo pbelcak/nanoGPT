@@ -1,6 +1,6 @@
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-bitmlp-6'
+wandb_run_name='gpt2-railmlp-0-4-1'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -24,16 +24,17 @@ n_embd = 768
 hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False
-vq_blocks_start = 6
-vq_block_type = "bit-mlp"
-vq_block_hidden_multipliers: list[int] = [4]
+vq_blocks_start = 0
+vq_block_type = "rail-mlp"
+n_in_vq_heads = 4
+vq_block_hidden_multipliers: list[int] = [1]
 
 # temperature
-use_temperature = False
+use_temperature = True
 temperature_requires_grad = False
 start_temperature = 1.0
 end_temperature = 0.05
-freezing_temperature = 0.91
+freezing_temperature = 0.90
 
 # this makes total number of tokens be 118B
 max_iters = 150000

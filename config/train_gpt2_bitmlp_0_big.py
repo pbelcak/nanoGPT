@@ -1,14 +1,14 @@
 wandb_log = True
 wandb_project = 'gpt2-owt'
-wandb_run_name='gpt2-bitmlp-6'
+wandb_run_name='gpt2-bitmlp-0-big'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
 
-# 12 batch size * 1024 block size * 4 gradaccum * 16 GPUs = 393,216
+# 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs * 4 nodes = 1,966,080
 batch_size = 12
 block_size = 1024
-gradient_accumulation_steps = 2 * 16
+gradient_accumulation_steps = 5 * 8 * 4
 
 # lr
 # we had 6e-4 for ~0.5M tokens per batch
@@ -23,8 +23,8 @@ n_head = 12
 n_embd = 768
 hidden_multipliers: list[int] = [4]
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
-bias = False
-vq_blocks_start = 6
+bias = True
+vq_blocks_start = 0
 vq_block_type = "bit-mlp"
 vq_block_hidden_multipliers: list[int] = [4]
 
@@ -35,7 +35,7 @@ start_temperature = 1.0
 end_temperature = 0.05
 freezing_temperature = 0.91
 
-# this makes total number of tokens be 118B
+# this makes total number of tokens be 295B
 max_iters = 150000
 lr_decay_iters = 150000
 
