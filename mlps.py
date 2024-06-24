@@ -150,7 +150,7 @@ class SigmoidRailMLP(nn.Module):
             stride=1,
             padding=0,
             dilation=1,
-            groups=1,
+            groups=self.rails_per_embd,
             bias=config.bias,
         )
        
@@ -163,7 +163,7 @@ class SigmoidRailMLP(nn.Module):
         # first make the rails with rail_maker
         x = x.transpose(1, 2) # (batch, n_embd, block_size)
 
-        x = self.rail_maker(x) # (batch, n_heads * rails_per_embd * rail_width, block_size)
+        x = self.rail_maker(x) * self.rails_per_embd # (batch, n_heads * rails_per_embd * rail_width, block_size)
         x = F.sigmoid(x) - 0.5 # (batch, n_heads * rails_per_embd * rail_width * hidden_multiplier, block_size)
         x = x.transpose(1, 2) # (batch, block_size, n_heads * rails_per_embd * rail_width * hidden_multiplier)
 
