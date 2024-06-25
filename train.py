@@ -39,6 +39,8 @@ except ModuleNotFoundError:
     print("AutoResume not available")
     can_autoresume = False
 
+import surgery
+
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
@@ -50,6 +52,8 @@ eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 standalone_ckpt_frequency = 10000 # save a standalone checkpoint every N iters (will not be overwritten by the following ckpts)
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
+surgeries = None # no surgeries by default
+past_surgeries = None # no past surgeries by default
 # wandb logging
 wandb_log = False # disabled by default
 wandb_project = 'owt'
@@ -211,7 +215,8 @@ if init_from == 'scratch':
     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
-elif init_from == 'resume' or init_from == 'eval_ckpt':
+
+elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
@@ -221,9 +226,13 @@ elif init_from == 'resume' or init_from == 'eval_ckpt':
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = checkpoint_model_args[k]
+    
     # create the model
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
+    if surgeries is not None and len(surgeries) > 0:
+        surgery.perform_surgeries(gptconf, model, surgeries)
+
     state_dict = checkpoint['model']
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
@@ -236,6 +245,54 @@ elif init_from == 'resume' or init_from == 'eval_ckpt':
     temperature = checkpoint['curr_temperature']
     model.set_temperature(temperature)
     best_val_loss = checkpoint['best_val_loss']
+
+elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
+    print(f"Initializing from checkpoint: {init_from}")
+    ckpt_path = init_from.split(':')[1]
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint_model_args = checkpoint['model_args']
+    # force these config attributes to be equal otherwise we can't even resume training
+    # the rest of the attributes (e.g. dropout) can stay as desired from command line
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args[k]
+    
+    # create the model
+    gptconf = GPTConfig(**model_args)
+    model = GPT(gptconf)
+    if init_from.startswith('peerify_ckpt:'):
+        if past_surgeries is not None and len(past_surgeries) > 0:
+            surgery.perform_surgeries(gptconf, model, past_surgeries)
+    
+    state_dict = checkpoint['model']
+    # fix the keys of the state dictionary :(
+    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+    unwanted_prefix = '_orig_mod.'
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
+    iter_num = 0
+    ckpt_temperature = checkpoint['curr_temperature']
+    model.set_temperature(ckpt_temperature)
+
+    if init_from.startswith('peerify_ckpt:'):
+        if surgeries is not None and len(surgeries) > 0:
+            surgery.perform_surgeries(gptconf, model, surgeries)
+
+    # print all parameters
+    #for name, param in model.named_parameters():
+    #    print(name, param.requires_grad)
+
+    # freeze every parameter that is not related to PeerMLP
+    for name, param in model.named_parameters():
+        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name:
+            param.requires_grad = False
+
+    print("These params are not frozen")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name)
+    
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
     # initialize from OpenAI GPT-2 weights
@@ -244,6 +301,7 @@ elif init_from.startswith('gpt2'):
     # read off the created config params, so we can store them into checkpoint correctly
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = getattr(model.config, k)
+    
 # crop down the model block size if desired, using model surgery
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)

@@ -381,3 +381,72 @@ class BitMLP(nn.Module):
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
+
+class PeerMLP(nn.Module):
+    permutations: nn.ParameterList
+    vqizers: nn.ModuleList
+    mlps: nn.ModuleList
+
+    def __init__(self, config, mlp: MLP) -> None:
+        super().__init__()
+
+        self.mlps = nn.ModuleList([mlp])
+        self.vqizers = nn.ModuleList([ VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature) ])
+        self.permutations = nn.ParameterList([
+            # add identity permutation of size config.n_embd
+            nn.Parameter(torch.arange(config.n_embd, dtype=torch.long), requires_grad=False)
+        ])
+
+        # freeze all parameters in self.mlps
+        for mlp in self.mlps:
+            for param in mlp.parameters():
+                param.requires_grad = False
+
+    def add_peer(self, new_mlp: MLP, new_vqizer: VQizer, permutation: torch.Tensor) -> int:
+        new_idx: int = len(self.mlps)
+        self.mlps.append(new_mlp)
+        self.vqizers.append(new_vqizer)
+        self.permutations.append(nn.Parameter(permutation, requires_grad=False))
+
+        return new_idx
+
+    def add_new_peer(self, config) -> int:
+        new_idx: int = self.add_peer(
+            MLP(config),
+            nn.Identity(),
+            torch.randperm(config.n_embd)
+        )
+        return new_idx
+    
+    def vqize_last(self, config) -> int:
+        # freeze all parameters of mlps but the last one
+        for mlp in self.mlps[:-1]:
+            for param in mlp.parameters():
+                param.requires_grad = False
+
+        # freeze all parameters of all but the last vqizer
+        for vqizer in self.vqizers[:-1]:
+            for param in vqizer.parameters():
+                param.requires_grad = False
+
+        # replace the Identity at self.vqizers[idx] with a FullVQizer built according to config
+        self.vqizers.pop(-1)
+        self.vqizers.append(VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x has shape (batch, block_size, n_embd)
+        y = torch.zeros_like(x)
+        for permutation, vqizer, mlp in zip(self.permutations, self.vqizers, self.mlps):
+            y = y + mlp(vqizer(x)[:, :, permutation])
+
+        return y
+
+    def unfreeze_last(self) -> None:
+        # unfreeze all parameters of the last mlp
+        for param in self.mlps[-1].parameters():
+            param.requires_grad = True
+
+        # unfreeze all parameters of the last vqizer unless it's "temperature"
+        for name, param in self.vqizers[-1].named_parameters():
+            if name != 'temperature':
+                param.requires_grad = True
