@@ -29,7 +29,7 @@ for arg in "$@"; do
   args="$args $arg"
 done
 
-PROJECT_PATH=$PB/lutification
-CODE_PATH=${PROJECT_PATH}/experiments/vision
+PROJECT_PATH=$PB/nanoGPT
+CODE_PATH=${PROJECT_PATH}
 
 submit_job --gpu 8 --nodes 1 --partition=grizzly,polar,polar2,polar3,polar4 --duration 4 --autoresume_before_timelimit 30 -n $JOB_NAME --image nvcr.io/nvidia/pytorch:23.11-py3 --command 'source cluster/prepare_job.sh; source cluster/secrets.sh; PYTHONPATH='"$CODE_PATH"':'"$PROJECT_PATH"':${PYTHONPATH} torchrun --nproc_per_node $SUBMIT_GPUS --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes $NUM_NODES --node_rank $NODE_RANK train.py '"$args" 
