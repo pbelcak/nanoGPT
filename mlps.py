@@ -417,6 +417,15 @@ class PeerMLP(nn.Module):
             torch.randperm(config.n_embd)
         )
         return new_idx
+
+    def add_new_linear_peer(self, config) -> int:
+        new_idx: int = self.add_peer(
+            nn.Linear(config.n_embd, config.n_embd),
+            nn.Identity(),
+            torch.arange(config.n_embd)
+        )
+        self.mlps[-1].weight.data.normal_(mean=0.0, std=0.02)
+        return new_idx
     
     def vqize_last(self, config) -> int:
         # freeze all parameters of mlps but the last one
@@ -437,7 +446,7 @@ class PeerMLP(nn.Module):
         # x has shape (batch, block_size, n_embd)
         y = torch.zeros_like(x)
         for permutation, vqizer, mlp in zip(self.permutations, self.vqizers, self.mlps):
-            y = y + mlp(vqizer(x)[:, :, permutation])
+            y = y + mlp(vqizer(x[:, :, permutation]))
 
         return y
 

@@ -26,7 +26,5 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 	config/eval_gpt2_2M_big.py
 
 # interactive base gpt peerification
-I=0
-JOB_NAME=peerify1_base_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
-	config/peerify1_base.py
+	config/peerify_base_11_4.py

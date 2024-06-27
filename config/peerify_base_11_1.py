@@ -1,21 +1,19 @@
+# config for training GPT-2 (124M) down to very nice loss of ~2.85 on 1 node of 8X A100 40GB
+# launch as the following (e.g. in a screen session) and wait ~5 days:
+# $ torchrun --standalone --nproc_per_node=8 train.py config/train_gpt2.py
 
 wandb_log = True
 wandb_project = 'gpt2-peerify'
-wandb_run_name='peerify_base_11_4'
+wandb_run_name='peerify_base_11_1'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
 standalone_ckpt_frequency = 2500
 
 # init
-init_from = 'peerify_ckpt:out/peerify_base_11_3/ckpt_10000.pt'
-past_surgeries = [
-    ('peerify', 11),
-    ('unfreeze_last', 11),
-    ('add_peer_mlp', 11),
-]
+init_from = 'peerify_ckpt:out/gpt2-vanilla-295B-2M/ckpt_150000.pt'
 surgeries = [
-    ('vqize_last', 11),
+    ('peerify', 11),
 ]
 
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs * 4 nodes = ~2M
@@ -50,6 +48,3 @@ freezing_temperature = 1.0
 # vq config
 n_in_vq_heads = 4
 n_in_vq_options = 64
-
-# compilation
-compile = True

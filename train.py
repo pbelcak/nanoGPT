@@ -41,6 +41,29 @@ except ModuleNotFoundError:
 
 import surgery
 
+def compute_param_grad_stats(model):
+    chosen_params = [
+        'vq_head_weights',
+        'vq_codebooks',
+    ]
+
+    param_grad_stats = {}
+    for name, param in model.named_parameters():
+        for chosen_param in chosen_params:
+            if chosen_param in name:
+                param_grad_stats[name + '/param_mean'] = param.abs().mean().item()
+                param_grad_stats[name + '/param_std'] = param.abs().std().item()
+                param_grad_stats[name + '/param_max'] = param.abs().max().item()
+                param_grad_stats[name + '/param_min'] = param.abs().min().item()
+
+                if param.grad is not None:
+                    param_grad_stats[name + '/grad_mean'] = param.grad.abs().mean().item()
+                    param_grad_stats[name + '/grad_std'] = param.grad.abs().std().item()
+                    param_grad_stats[name + '/grad_max'] = param.grad.abs().max().item()
+                    param_grad_stats[name + '/grad_min'] = param.grad.abs().min().item()
+
+    return param_grad_stats
+
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
@@ -368,7 +391,7 @@ running_mfu = -1.0
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config, resume=True, dir=out_dir)
-    #wandb.watch(raw_model, log='all', log_freq=10)
+    #wandb.watch(raw_model, log='all', log_freq=1)
 
 # the loop
 while True:
@@ -385,6 +408,7 @@ while True:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, temp {temperature}, lr {lr}")
         if wandb_log:
+            param_grad_stats_log = compute_param_grad_stats(model)
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
@@ -392,6 +416,7 @@ while True:
                 "train/temperature": temperature,
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
+                **param_grad_stats_log
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
