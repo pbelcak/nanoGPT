@@ -355,7 +355,7 @@ if ddp:
 def estimate_loss():
     out = {}
     model.eval()
-    raw_model.start_tracking()
+    model.module.start_tracking()
 
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -366,8 +366,8 @@ def estimate_loss():
             losses[k] = loss.item()
         out[split] = losses.mean()
 
-    named_usages = raw_model.get_named_usages()
-    raw_model.end_tracking()
+    named_usages = model.module.get_named_usages()
+    model.module.end_tracking()
     model.train()
     return out, named_usages
 

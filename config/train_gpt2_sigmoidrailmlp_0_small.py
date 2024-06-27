@@ -47,4 +47,4 @@ eval_iters = 200
 log_interval = 10
 
 # compilation
-compile = False
+compile = True
