@@ -355,6 +355,10 @@ if ddp:
 def estimate_loss():
     out = {}
     model.eval()
+
+    model.start_tracking()
+
+
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
@@ -363,6 +367,9 @@ def estimate_loss():
                 logits, loss = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
+
+    model.end_tracking()
+
     model.train()
     return out
 

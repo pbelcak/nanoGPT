@@ -176,6 +176,26 @@ class GPT(nn.Module):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
+    def start_tracking(self):
+        usages = []
+        for model_module in self.modules():
+            if isinstance(model_module, VQizer):
+                usages.append(model_module.get_usage())
+
+        return usages
+
+
+    def get_usage(self):
+        for model_module in self.modules():
+            if isinstance(model_module, VQizer):
+                # get the name of the first param of model_module
+                name: str = ""
+
+    def end_tracking(self):
+        for model_module in self.modules():
+            if isinstance(model_module, VQizer):
+                model_module.end_tracking()
+
     def get_num_params(self, non_embedding=True):
         """
         Return the number of parameters in the model.

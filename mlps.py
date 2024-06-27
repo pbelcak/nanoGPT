@@ -191,6 +191,24 @@ class VQizer(nn.Module):
         self.use_temperature = use_temperature
         self.is_frozen = False
 
+        # tracking
+        self.tracking_enabled: int = False
+        self.tracking_entries: list[list[int]] = []
+
+    def start_tracking(self) -> None:
+        self.tracking_enabled = True
+        self.tracking_entries = []
+    
+    def end_tracking(self) -> None:
+        self.tracking_enabled = False
+
+    def get_usage(self) -> list[list[int]]:
+        usage = [[0 for _ in self.n_vq_options] for _ in range(self.n_vq_heads)]
+        for tracking_entry in self.tracking_entries:
+            for i, val in enumerate(tracking_entry):
+                usage[i][val] += 1
+        return usage
+
     def freeze(self):
         self.is_frozen = True
 
@@ -215,6 +233,10 @@ class VQizer(nn.Module):
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
             _, argmax = torch.max(logits, dim=-1)
+            if self.tracking_enabled:
+                flatargmax = argmax.flatten(0, -2) # shape (batch * seq_len, n_vqheads)
+                # turn flatargmax into a list of n_vqoptions-lists
+                self.tracking_entries.extend(flatargmax.tolist())
             probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
         # perform soft mixture by matmul of probs and codebooks
