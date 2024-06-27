@@ -355,9 +355,7 @@ if ddp:
 def estimate_loss():
     out = {}
     model.eval()
-
     model.start_tracking()
-
 
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -368,10 +366,10 @@ def estimate_loss():
             losses[k] = loss.item()
         out[split] = losses.mean()
 
+    named_usages = model.get_named_usages()
     model.end_tracking()
-
     model.train()
-    return out
+    return out, named_usages
 
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
@@ -412,8 +410,9 @@ while True:
 
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
-        losses = estimate_loss()
+        losses, named_usages = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, temp {temperature}, lr {lr}")
+        # wandb logging
         if wandb_log:
             param_grad_stats_log = compute_param_grad_stats(model)
             wandb.log({
@@ -425,6 +424,24 @@ while True:
                 "mfu": running_mfu*100, # convert to percentage
                 **param_grad_stats_log
             })
+
+        # usage plotting
+        if master_process:
+            # for every named usage, plot a bar plot per usage in the list, then save it into a file in out_dir
+            for usage_name, usage_list in named_usages.items():
+                usage_name = usage_name.replace('/', '_')
+                for vq_head_id, usage in enumerate(usage_list):
+                    # usage is a list of ints; plot it as a bar plot
+                    import matplotlib.pyplot as plt
+                    plt.figure(figsize=(12, 6))
+                    plt.bar(range(len(usage)), usage)
+                    plt.title(f"{usage_name} usage")
+                    plt.xlabel("entry")
+                    plt.ylabel("usage")
+                    plt.savefig(os.path.join(out_dir, f"{usage_name}_{vq_head_id}_{iter_num}.png"))
+
+
+        # checkpointing
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
             if iter_num > 0:

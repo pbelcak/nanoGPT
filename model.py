@@ -185,11 +185,19 @@ class GPT(nn.Module):
         return usages
 
 
-    def get_usage(self):
+    def get_named_usages(self) -> dict[str, list[list[int]]]:
+        named_usages = {}
         for model_module in self.modules():
             if isinstance(model_module, VQizer):
                 # get the name of the first param of model_module
-                name: str = ""
+                name: str = next(model_module.named_parameters())[0]
+                # remove everything after the last '.' from the name
+                name = name[:name.rfind('.')]
+                # add the name and the usage to the list
+                named_usages[name] = model_module.get_usage()
+
+        return named_usages
+
 
     def end_tracking(self):
         for model_module in self.modules():
