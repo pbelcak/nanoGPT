@@ -84,7 +84,7 @@ def unfreeze_last(config, model, block_idx: int) -> None:
 def tabulate_last(config, model, block_idx: int) -> None:
     tgt_block: Block = model.transformer.h[block_idx]
     if not isinstance(tgt_block.mlp, PeerMLP):
-        raise ValueError(f"Block {block_idx} does not have a PeerMLP as mlp")
+        raise ValueError(f"Block {block_idx} does not have a PeerMLP as mlp, it has {tgt_block.mlp}")
 
     tgt_block.mlp.tabulate_last()
     print("Tabulated the last mlp of the PeerMLP of block  ", block_idx)

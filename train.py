@@ -303,8 +303,8 @@ elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
             surgery.perform_surgeries(gptconf, model, surgeries)
 
     # print all parameters
-    #for name, param in model.named_parameters():
-    #    print(name, param.requires_grad)
+    for name, param in model.named_parameters():
+        print(name, param.requires_grad)
 
     # freeze every parameter that is not related to PeerMLP
     for name, param in model.named_parameters():
@@ -335,7 +335,7 @@ model.to(device)
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
-optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
+optimizer, table_optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
 checkpoint = None # free up memory
@@ -490,9 +490,11 @@ while True:
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
     # step the optimizer and scaler if training in fp16
     scaler.step(optimizer)
+    scaler.step(table_optimizer)
     scaler.update()
     # flush the gradients as soon as we can, no need for this memory anymore
     optimizer.zero_grad(set_to_none=True)
+    table_optimizer.zero_grad(set_to_none=True)
 
     # timing and logging
     t1 = time.time()

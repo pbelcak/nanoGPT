@@ -4,7 +4,7 @@
 
 wandb_log = True
 wandb_project = 'gpt2-peerify'
-wandb_run_name='peerify_base_11_3'
+wandb_run_name='peerify_base_11_3_tabulate'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
@@ -52,3 +52,6 @@ freezing_temperature = 1.0
 # vq config
 n_in_vq_heads = 4
 n_in_vq_options = 64
+
+# compilation switch for testing
+compile = True

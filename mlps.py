@@ -505,7 +505,8 @@ class PeerMLP(nn.Module):
             param.requires_grad = False
 
         # tabulate the last mlp
-        self.mlps[-1] = TabularMLP(last_vqizer.n_embd, last_vqizer.n_vq_heads, last_vqizer.n_vq_options)
+        self.mlps.pop(-1)
+        self.mlps.append(TabularMLP(last_vqizer.n_embd, last_vqizer.n_vq_heads, last_vqizer.n_vq_options))
 
 
 class TabularMLP(nn.Module):
@@ -516,22 +517,28 @@ class TabularMLP(nn.Module):
         self.n_options = n_options
         self.table_size = n_options ** n_heads
 
-        self.table = nn.Parameter(torch.randn(self.table_size, n_embd)*0.02)
+        self.table = nn.Parameter(torch.randn(self.table_size, n_embd, dtype=torch.bfloat16)*0.02)
 
     def forward(self, head_indices: torch.Tensor) -> torch.Tensor:
         # head_indices is a long tensor of shape (batch, block_size, n_heads)
         
         # convert head_indices into absolute indices
         flat_indices = torch.zeros_like(head_indices, dtype=torch.long) # shape (batch, block_size, n_heads)
+        #print(head_indices.min().item(), head_indices.max().item())
+
         multiplier: int = 1
         for i in range(self.n_heads):
-            flat_indices[:, i] = multiplier * head_indices[:, i]
+            flat_indices[:, :, i] = multiplier * head_indices[:, :, i]
             multiplier *= self.n_options
         
         # sum up the contributions of the heads
         flat_indices = flat_indices.sum(dim=-1) # shape (batch, block_size)
+        flat_indices = flat_indices.flatten().unsqueeze(-1).expand(-1, self.n_embd) # shape (batch * block_size, n_embd)
+
+        #print(flat_indices.min().item(), flat_indices.max().item())
 
         # index select the table
-        y = F.embedding(flat_indices, self.table) # shape (batch, block_size, n_embd)
+        y = torch.gather(self.table, 0, flat_indices, sparse_grad=False) # shape (batch * block_size, n_embd)
+        y = y.view(*head_indices.shape[0:2], self.n_embd)
 
         return y
