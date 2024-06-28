@@ -235,10 +235,12 @@ class VQizer(nn.Module):
             # at inference time we turn the probabilities into one-hot vectors
             # this is the same as taking the argmax of the probs
             _, argmax = torch.max(logits, dim=-1)
+
             if self.tracking_enabled:
                 flatargmax = argmax.detach().flatten(0, 1) # shape (batch * seq_len, n_vqheads)
                 # turn flatargmax into a list of n_vqoptions-lists
                 self.tracking_entries.extend(flatargmax.tolist())
+            
             probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
         # perform soft mixture by matmul of probs and codebooks
