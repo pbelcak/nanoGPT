@@ -214,7 +214,7 @@ class VQizer(nn.Module):
     def freeze(self):
         self.is_frozen = True
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, return_indices: bool = False):
         # input shape (batch, seq_len, emb_dim)
         # matmul x and vq_head_weights to get per-head codebook choice logits
         # then apply softmax (with temperature self.t!) to get probabilities
@@ -247,7 +247,10 @@ class VQizer(nn.Module):
         x = torch.einsum('bsho,hoa->bsha', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, head_size)
         x = x.flatten(2) # shape (batch, seq_len, emb_dim)
 
-        return x
+        if not return_indices or (self.training and not self.is_frozen):
+            return x
+        else:
+            return x, argmax
 
 class FastComponent(nn.Module):
     def __init__(self, config):
@@ -472,7 +475,14 @@ class PeerMLP(nn.Module):
         # x has shape (batch, block_size, n_embd)
         y = torch.zeros_like(x)
         for permutation, vqizer, mlp in zip(self.permutations, self.vqizers, self.mlps):
-            y = y + mlp(vqizer(x[:, :, permutation]))
+            x_permuted = x[:, :, permutation]
+            if isinstance(mlp, TabularMLP):
+                _, indices = vqizer(x_permuted, return_indices=True)
+                y_contrib = mlp(indices)
+            else:
+                y_contrib = mlp(vqizer(x_permuted))
+            
+            y = y + y_contrib
 
         return y
 
@@ -485,3 +495,43 @@ class PeerMLP(nn.Module):
         for name, param in self.vqizers[-1].named_parameters():
             if name != 'temperature':
                 param.requires_grad = True
+
+    def tabulate_last(self) -> None:
+        # get the last VQizer
+        last_vqizer = self.vqizers[-1]
+
+        # freeze all parameters of the last vqizer
+        for param in last_vqizer.parameters():
+            param.requires_grad = False
+
+        # tabulate the last mlp
+        self.mlps[-1] = TabularMLP(last_vqizer.n_embd, last_vqizer.n_vq_heads, last_vqizer.n_vq_options)
+
+
+class TabularMLP(nn.Module):
+    def __init__(self, n_embd: int, n_heads: int, n_options: int) -> None:
+        super().__init__()
+        self.n_embd = n_embd
+        self.n_heads = n_heads
+        self.n_options = n_options
+        self.table_size = n_options ** n_heads
+
+        self.table = nn.Parameter(torch.randn(self.table_size, n_embd)*0.02)
+
+    def forward(self, head_indices: torch.Tensor) -> torch.Tensor:
+        # head_indices is a long tensor of shape (batch, block_size, n_heads)
+        
+        # convert head_indices into absolute indices
+        flat_indices = torch.zeros_like(head_indices, dtype=torch.long) # shape (batch, block_size, n_heads)
+        multiplier: int = 1
+        for i in range(self.n_heads):
+            flat_indices[:, i] = multiplier * head_indices[:, i]
+            multiplier *= self.n_options
+        
+        # sum up the contributions of the heads
+        flat_indices = flat_indices.sum(dim=-1) # shape (batch, block_size)
+
+        # index select the table
+        y = F.embedding(flat_indices, self.table) # shape (batch, block_size, n_embd)
+
+        return y
