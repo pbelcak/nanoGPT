@@ -471,6 +471,21 @@ class PeerMLP(nn.Module):
         self.vqizers.pop(-1)
         self.vqizers.append(VQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature))
 
+    def fullvqize_last(self, config) -> int:
+        # freeze all parameters of mlps but the last one
+        for mlp in self.mlps[:-1]:
+            for param in mlp.parameters():
+                param.requires_grad = False
+
+        # freeze all parameters of all but the last vqizer
+        for vqizer in self.vqizers[:-1]:
+            for param in vqizer.parameters():
+                param.requires_grad = False
+
+        # replace the Identity at self.vqizers[idx] with a FullVQizer built according to config
+        self.vqizers.pop(-1)
+        self.vqizers.append(FullVQizer(config.n_embd, config.n_in_vq_heads, config.n_in_vq_options, config.temperature_requires_grad, config.use_temperature))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x has shape (batch, block_size, n_embd)
         y = torch.zeros_like(x)
@@ -542,3 +557,82 @@ class TabularMLP(nn.Module):
         y = y.view(*head_indices.shape[0:2], self.n_embd)
 
         return y
+
+class FullVQizer(nn.Module):
+    def __init__(self, n_embd: int, n_vq_heads: int, n_vq_options: int, temperature_requires_grad: bool = True, use_temperature: bool = True):
+        super().__init__()
+        # n_vqheads holds the number of heads to use for vector quantization
+        # n_vqoptions holds the number of vectors in the per-head codebook for vector quantization
+        self.n_embd = n_embd
+        self.n_vq_heads = n_vq_heads
+        self.n_vq_options = n_vq_options
+        self.head_size: int = n_embd // n_vq_heads
+
+        self.vq_head_weights = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.n_embd)*0.02)
+        self.vq_codebooks = nn.Parameter(torch.randn(n_vq_heads, n_vq_options, self.n_embd)*0.02)
+
+        # temperature
+        self.temperature = nn.Parameter(torch.tensor(1.0), requires_grad=temperature_requires_grad)
+        self.use_temperature = use_temperature
+        self.is_frozen = False
+
+        # tracking
+        self.tracking_enabled: bool = False
+        self.tracking_entries: list[list[int]] = []
+
+    def start_tracking(self) -> None:
+        # print("vqizer starting tracking")
+        self.tracking_enabled = True
+        self.tracking_entries = []
+    
+    def end_tracking(self) -> None:
+        # print("vqizer ending tracking")
+        self.tracking_enabled = False
+
+    def get_usage(self) -> list[list[int]]:
+        usage = [[0 for _ in range(self.n_vq_options)] for _ in range(self.n_vq_heads)]
+        for tracking_entry in self.tracking_entries:
+            for i, val in enumerate(tracking_entry):
+                usage[i][val] += 1
+        return usage
+
+    def freeze(self):
+        self.is_frozen = True
+
+    def forward(self, x: torch.Tensor, return_indices: bool = False):
+        # input shape (batch, seq_len, n_embd)
+        # matmul x and vq_head_weights to get per-head codebook choice logits
+        # then apply softmax (with temperature self.t!) to get probabilities
+        x_prepped = x
+        logits = torch.einsum('bse,hoe->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        
+        if self.training:
+            if self.use_temperature:
+                probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            else:
+                probs = F.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+
+            if self.is_frozen:
+                _, argmax = torch.max(logits, dim=-1)
+                hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+                probs = hard_probs + probs - probs.detach()
+        else:
+            # at inference time we turn the probabilities into one-hot vectors
+            # this is the same as taking the argmax of the probs
+            _, argmax = torch.max(logits, dim=-1)
+
+            if self.tracking_enabled:
+                flatargmax = argmax.detach().flatten(0, 1) # shape (batch * seq_len, n_vqheads)
+                # turn flatargmax into a list of n_vqoptions-lists
+                self.tracking_entries.extend(flatargmax.tolist())
+            
+            probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+
+        # perform soft mixture by matmul of probs and codebooks
+        x = torch.einsum('bsho,hoe->bshe', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, n_embd)
+        x = x.sum(-2) # shape (batch, seq_len, n_embd)
+
+        if not return_indices or (self.training and not self.is_frozen):
+            return x
+        else:
+            return x, argmax

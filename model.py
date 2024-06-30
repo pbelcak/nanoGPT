@@ -325,7 +325,7 @@ class GPT(nn.Module):
 
         return model
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, table_learning_rate):
         # start with all of the candidate parameters
         # filter out those that do not require grad
         param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad and not pn.endswith('.table')}
@@ -349,7 +349,7 @@ class GPT(nn.Module):
         use_fused = fused_available and device_type == 'cuda'
         extra_args = dict(fused=True) if use_fused else dict()
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        table_optimizer = torch.optim.SGD(table_param_dict.values(), lr=0.0001, momentum=0)
+        table_optimizer = torch.optim.AdamW(table_param_dict.values(), lr=table_learning_rate, betas=betas, **extra_args) if len(table_param_dict) > 0 else None
         print(f"using fused AdamW: {use_fused}")
 
         return optimizer, table_optimizer

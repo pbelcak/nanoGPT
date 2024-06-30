@@ -4,17 +4,16 @@
 
 wandb_log = True
 wandb_project = 'gpt2-peerify'
-wandb_run_name='peerify_base_11_3_tabulate'
+wandb_run_name='peerify_base_11_3_32_tabulate'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
 standalone_ckpt_frequency = 2500
 
 # init
-init_from = 'peerify_ckpt:out/peerify_base_11_2/ckpt_5000.pt'
+init_from = 'peerify_ckpt:out/peerify_base_11_1_32/ckpt_10000.pt'
 past_surgeries = [
     ('peerify', 11),
-    ('unfreeze_last', 11),
 ]
 surgeries = [
     ('tabulate_last', 11),
@@ -28,6 +27,7 @@ gradient_accumulation_steps = 5 * 8 * 4
 # lr
 # we had 6e-4 for ~0.5M tokens per batch
 learning_rate = 6e-4
+table_learning_rate = 6e-3
 
 # weight decay
 weight_decay = 1e-1
@@ -51,7 +51,7 @@ freezing_temperature = 1.0
 
 # vq config
 n_in_vq_heads = 4
-n_in_vq_options = 64
+n_in_vq_options = 32
 
 # compilation switch for testing
-compile = True
+compile = False

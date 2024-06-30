@@ -10,7 +10,9 @@ def perform_surgeries(config, model, surgeries):
         elif surgery_type == "add_peer_linear":
             add_peer_linear(config, model, layer)
         elif surgery_type == 'vqize_last':
-            vqize(config, model, layer)
+            vqize_last(config, model, layer)
+        elif surgery_type == 'fullvqize_last':
+            fullvqize_last(config, model, layer)
         elif surgery_type == 'tabulate_last':
             tabulate_last(config, model, layer)
         elif surgery_type == 'unfreeze_last':
@@ -65,12 +67,20 @@ def add_peer_linear(config, model, block_idx: int) -> None:
     
     print("Added a peer linear to the PeerMLP of block ", block_idx)
 
-def vqize(config, model, block_idx: int) -> None:
+def vqize_last(config, model, block_idx: int) -> None:
     tgt_block: Block = model.transformer.h[block_idx]
     if not isinstance(tgt_block.mlp, PeerMLP):
         raise ValueError(f"Block {block_idx} does not have a PeerMLP as mlp")
     
     tgt_block.mlp.vqize_last(config)
+    print("VQized the last mlp of the PeerMLP of block  ", block_idx)
+
+def fullvqize_last(config, model, block_idx: int) -> None:
+    tgt_block: Block = model.transformer.h[block_idx]
+    if not isinstance(tgt_block.mlp, PeerMLP):
+        raise ValueError(f"Block {block_idx} does not have a PeerMLP as mlp")
+    
+    tgt_block.mlp.fullvqize_last(config)
     print("VQized the last mlp of the PeerMLP of block  ", block_idx)
 
 def unfreeze_last(config, model, block_idx: int) -> None:
@@ -88,3 +98,4 @@ def tabulate_last(config, model, block_idx: int) -> None:
 
     tgt_block.mlp.tabulate_last()
     print("Tabulated the last mlp of the PeerMLP of block  ", block_idx)
+

@@ -103,6 +103,7 @@ n_out_vq_heads = 4
 n_out_vq_options = 1024
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
+table_learning_rate = 6e-4
 max_iters = 600000 # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
@@ -335,7 +336,7 @@ model.to(device)
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
-optimizer, table_optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
+optimizer, table_optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type, table_learning_rate)
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
 checkpoint = None # free up memory
@@ -490,11 +491,13 @@ while True:
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
     # step the optimizer and scaler if training in fp16
     scaler.step(optimizer)
-    scaler.step(table_optimizer)
+    if table_optimizer is not None:
+        scaler.step(table_optimizer)
     scaler.update()
     # flush the gradients as soon as we can, no need for this memory anymore
     optimizer.zero_grad(set_to_none=True)
-    table_optimizer.zero_grad(set_to_none=True)
+    if table_optimizer is not None:
+        table_optimizer.zero_grad(set_to_none=True)
 
     # timing and logging
     t1 = time.time()
