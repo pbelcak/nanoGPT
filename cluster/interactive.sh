@@ -32,3 +32,19 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 # interactive gpt peerification tabulation step
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_3_tabulate.py
+
+# interactive gpt peerification fullvqization step 4
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_4_full.py
+
+# interactive gpt peerification fullvqization step 1
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_1_full.py
+
+# interactive gpt peerification fullvqization step 1
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_1_16_full.py
+
+# interactive gpt peerification fullvqization step 1
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_1_16_full_8.py
