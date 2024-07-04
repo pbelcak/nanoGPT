@@ -6,7 +6,7 @@ import sys
 from tqdm import tqdm
 import numpy as np
 import tiktoken
-from datasets import load_dataset # huggingface datasets
+import datasets
 
 # number of workers in .map() call
 # good number to use is ~order number of cpu cores // 2
@@ -20,13 +20,15 @@ num_proc_load_dataset = num_proc
 enc = tiktoken.get_encoding("gpt2")
 
 if __name__ == '__main__':
-    # the first argument passed to the script is the name of the dataset to load
-    dataset_name = sys.argv[1]
-    dataset = load_dataset(dataset_name, num_proc=num_proc_load_dataset)
+    # the first argument passed to the script is the path to the dataset to load
+    dataset_path = sys.argv[1]
+    dataset_name = os.path.basename(dataset_path)
+    dataset = datasets.load_from_disk(dataset_path)
 
     # owt by default only contains the 'train' split, so create a test split
     split_dataset = dataset["train"].train_test_split(test_size=0.0005, seed=2357, shuffle=True)
     split_dataset['val'] = split_dataset.pop('test') # rename the test split to val
+    # print(split_dataset)
 
     # we now want to tokenize the dataset. first define the encoding function (gpt2 bpe)
     def process(example):
@@ -43,14 +45,19 @@ if __name__ == '__main__':
         desc="tokenizing the splits",
         num_proc=num_proc,
     )
+    
+    # make a new directory for dataset_name
+    parent = os.path.dirname(__file__)
+    out_dir = os.path.join(parent, dataset_name)
+    os.makedirs(out_dir, exist_ok=True)
 
     # concatenate all the ids in each dataset into one large file we can use for training
     for split, dset in tokenized.items():
         arr_len = np.sum(dset['len'], dtype=np.uint64)
-        filename = os.path.join(os.path.dirname(__file__), f'{dataset_name}_{split}.bin')
+        filename = os.path.join(out_dir, f'{split}.bin')
         dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
         arr = np.memmap(filename, dtype=dtype, mode='w+', shape=(arr_len,))
-        total_batches = 1024
+        total_batches = min(1024, len(dset))
 
         idx = 0
         for batch_idx in tqdm(range(total_batches), desc=f'writing {filename}'):
