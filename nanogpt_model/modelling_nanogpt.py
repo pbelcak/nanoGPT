@@ -120,7 +120,7 @@ class Block(nn.Module):
             x = x + self.mlp(self.ln_2(x))
             return x
 
-class GPT(nn.Module, PreTrainedModel):
+class GPT(PreTrainedModel):
     config_class = GPTConfig
 
     def __init__(self, config):
