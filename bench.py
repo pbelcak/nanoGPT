@@ -6,8 +6,8 @@ from contextlib import nullcontext
 import time
 import numpy as np
 import torch
-from .nanogpt_model.modelling_nanogpt import GPT
-from .nanogpt_model.configuration_nanogpt import GPTConfig
+from nanogpt_model.modelling_nanogpt import GPT
+from nanogpt_model.configuration_nanogpt import GPTConfig
 
 # -----------------------------------------------------------------------------
 batch_size = 12

@@ -6,8 +6,8 @@ import pickle
 from contextlib import nullcontext
 import torch
 import tiktoken
-from .nanogpt_model.modelling_nanogpt import GPT
-from .nanogpt_model.configuration_nanogpt import GPTConfig
+from nanogpt_model.modelling_nanogpt import GPT
+from nanogpt_model.configuration_nanogpt import GPTConfig
 
 # -----------------------------------------------------------------------------
 init_from = 'resume' # either 'resume' (from an out_dir) or a gpt2 variant (e.g. 'gpt2-xl')

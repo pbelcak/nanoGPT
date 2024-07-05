@@ -1,5 +1,5 @@
-from .nanogpt_model.modelling_nanogpt import Block, MLP
-from .nanogpt_model.mlps import PeerMLP
+from nanogpt_model.modelling_nanogpt import Block, MLP
+from nanogpt_model.mlps import PeerMLP
 
 def perform_surgeries(config, model, surgeries):
     for surgery_type, layer in surgeries:
