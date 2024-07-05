@@ -20,7 +20,7 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 	config/train_gpt2_fs_6C.py
 
 # interactive vanilla gpt eval
-I=0
+I=1
 JOB_NAME=eval_gpt2_vanilla_295B_2M_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/eval_gpt2_2M_big.py
@@ -52,3 +52,9 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 # interactive gpt peerification fullvqization 8 options step 1
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_1_8_full.py
+
+# interactive big model training test run
+I=0
+JOB_NAME=train_gpt2_vanilla_295B_2M_$I
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/train_gpt2_2M_big.py

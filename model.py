@@ -9,11 +9,12 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import math
 import inspect
-from dataclasses import dataclass, field
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+
+from transformers import PretrainedConfig, PreTrainedModel
 
 from mlps import MLP, BitMLP, VQizer, LutificationMLP, FSMLP, FastComponent, RailMLP, DebugRailMLP, SigmoidRailMLP, FSONMLP, SigmoidMLP
 
@@ -76,7 +77,6 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y
 
-
 class Block(nn.Module):
     def __init__(self, config, i: int):
         super().__init__()
@@ -119,33 +119,62 @@ class Block(nn.Module):
             x = x + self.mlp(self.ln_2(x))
             return x
 
-@dataclass
-class GPTConfig:
+class GPTConfig(PretrainedConfig):
+    # model specific
+    model_type = "nanogpt"
+
     # general
-    block_size: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    hidden_multipliers: list[int] = field(default_factory=lambda: [4])
-    dropout: float = 0.0
-    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    block_size: int
+    vocab_size: int
+    n_layer: int
+    n_head: int
+    n_embd: int
+    hidden_multipliers: list[int]
+    dropout: float
+    bias: bool
 
     # vq
-    vq_blocks_start: int = 1000
-    vq_block_type: str = "fancy" # "fancy", "fs-mlp", "bit-mlp", "rail-mlp", or "no-mlp" at the moment
-    n_in_vq_heads: int = 4
-    n_in_vq_options: int = 1024
-    vq_block_hidden_multipliers: list[int] = field(default_factory=lambda: [4])
-    n_out_vq_heads: int = 4
-    n_out_vq_options: int = 1024
+    vq_blocks_start: int
+    vq_block_type: str
+    n_in_vq_heads: int
+    n_in_vq_options: int
+    vq_block_hidden_multipliers: list[int]
+    n_out_vq_heads: int
+    n_out_vq_options: int 
 
     # temperature
     use_temperature: bool = True
     temperature_requires_grad: bool = False
     freezing_temperature: float = 0.0
 
-class GPT(nn.Module):
+    def __init__(self, block_size: int = 1024, vocab_size: int = 50304, n_layer: int = 12, n_head: int = 12, n_embd: int = 768,
+                 hidden_multipliers: list[int] = [4], dropout: float = 0.0, bias: bool = True,
+                 vq_blocks_start: int = 1000, vq_block_type: str = "fancy", n_in_vq_heads: int = 4, n_in_vq_options: int = 1024,
+                 vq_block_hidden_multipliers: list[int] = [4], n_out_vq_heads: int = 4, n_out_vq_options: int = 1024,
+                 use_temperature: bool = True, temperature_requires_grad: bool = False, freezing_temperature: float = 0.0, **kwargs):
+        super().__init__(**kwargs)
+        self.block_size = block_size
+        self.vocab_size = vocab_size
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.n_embd = n_embd
+        self.hidden_multipliers = hidden_multipliers
+        self.dropout = dropout
+        self.bias = bias
+        self.vq_blocks_start = vq_blocks_start
+        self.vq_block_type = vq_block_type
+        self.n_in_vq_heads = n_in_vq_heads
+        self.n_in_vq_options = n_in_vq_options
+        self.vq_block_hidden_multipliers = vq_block_hidden_multipliers
+        self.n_out_vq_heads = n_out_vq_heads
+        self.n_out_vq_options = n_out_vq_options
+        self.use_temperature = use_temperature
+        self.temperature_requires_grad = temperature_requires_grad
+        self.freezing_temperature = freezing_temperature
+
+class GPT(nn.Module, PreTrainedModel):
+    config_class = GPTConfig
+
     def __init__(self, config):
         super().__init__()
         assert config.vocab_size is not None
