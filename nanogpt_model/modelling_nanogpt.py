@@ -124,7 +124,7 @@ class GPT(PreTrainedModel):
     config_class = GPTConfig
 
     def __init__(self, config):
-        super().__init__()
+        super().__init__(config)
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.config = config
