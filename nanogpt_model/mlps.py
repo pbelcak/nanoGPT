@@ -614,7 +614,8 @@ class FullVQizer(nn.Module):
 
         if self.is_frozen:
             _, argmax = torch.max(logits, dim=-1)
-            hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+            hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # pylint: disable=not-callable
+            # shape (batch, seq_len, n_vqheads, n_vqoptions)
             probs = hard_probs + probs - probs.detach()
         #else:
             # at inference time we turn the probabilities into one-hot vectors

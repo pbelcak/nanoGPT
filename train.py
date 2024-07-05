@@ -27,7 +27,8 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-from model import GPTConfig, GPT
+from .nanogpt_model.modelling_nanogpt import GPT
+from .nanogpt_model.configuration_nanogpt import GPTConfig
 
 import sys
 sys.path.append(os.environ.get('SUBMIT_SCRIPTS','.'))

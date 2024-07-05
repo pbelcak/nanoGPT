@@ -3,10 +3,11 @@ A much shorter version of train.py for benchmarking
 """
 import os
 from contextlib import nullcontext
-import numpy as np
 import time
+import numpy as np
 import torch
-from model import GPTConfig, GPT
+from .nanogpt_model.modelling_nanogpt import GPT
+from .nanogpt_model.configuration_nanogpt import GPTConfig
 
 # -----------------------------------------------------------------------------
 batch_size = 12
@@ -45,7 +46,8 @@ else:
     # alternatively, if fixed data is desired to not care about data loading
     x = torch.randint(50304, (batch_size, block_size), device=device)
     y = torch.randint(50304, (batch_size, block_size), device=device)
-    get_batch = lambda split: (x, y)
+    def get_batch(split):
+        return x, y
 
 # model init
 gptconf = GPTConfig(
@@ -57,7 +59,7 @@ gptconf = GPTConfig(
 model = GPT(gptconf)
 model.to(device)
 
-optimizer = model.configure_optimizers(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), device_type=device_type)
+optimizer = model.configure_optimizers(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), table_learning_rate=1e-4, device_type=device_type)
 
 if compile:
     print("Compiling model...")
