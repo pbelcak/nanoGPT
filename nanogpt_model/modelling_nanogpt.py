@@ -8,7 +8,6 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 """
 
 import math
-import inspect
 
 import torch
 import torch.nn as nn
@@ -198,7 +197,7 @@ class GPT(PreTrainedModel):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, labels=None, return_dict=False, **kwargs):
         device = idx.device
         _, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -212,17 +211,23 @@ class GPT(PreTrainedModel):
             x = block(x)
         x = self.transformer.ln_f(x)
 
-        if targets is not None:
+        if labels is not None:
+            # shift labels by one to the left and fill in -100 at the last position
+            labels = torch.cat((labels[:, 1:], torch.full((labels.size(0), 1), -100, dtype=labels.dtype, device=device)), dim=1)
+
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-1)
 
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
-        return logits, loss
+        if not return_dict:
+            return loss, logits
+        else:
+            return {'loss': loss, 'logits': logits}
 
     def set_temperature(self, temperature: float):
         # set the temperature parameter in the VQizer modules to temperature
@@ -313,57 +318,39 @@ class GPT(PreTrainedModel):
         # now do the inverse of from_pretrained; in particular, we need to transpose the Conv1D weights
         sd = model.state_dict()
         sd_keys = sd.keys()
-        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
         sd_keys_hf = sd_hf.keys()
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')] # ignore these, just a buffer
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')] # same, just the mask (buffer)
         transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
 
         # basically we only want to use a vanilla Linear, but the openai checkpoints use a "Conv1D" module
         # this means that we have to transpose these weights when we export them
-        assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        print(sd_keys_hf)
+        print(sd_keys)
+        # assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         for k in sd_keys_hf:
             if any(k.endswith(w) for w in transposed):
                 # special treatment for the Conv1D weights we need to transpose
                 assert sd_hf[k].shape[::-1] == sd[k].shape
                 with torch.no_grad():
                     sd_hf[k].copy_(sd[k].t())
+            elif k.endswith('.bias'):
+                if k in sd:
+                    with torch.no_grad():
+                        sd_hf[k].copy_(sd[k])
+                else:
+                    sd_hf[k].fill_(0.0)
             else:
                 # vanilla copy over the other parameters
-                assert sd_hf[k].shape == sd[k].shape
-                with torch.no_grad():
-                    sd_hf[k].copy_(sd[k])
+                if k == 'transformer.wte.weight' or k == 'lm_head.weight':
+                    with torch.no_grad():
+                        sd_hf[k].copy_( sd[k][sd_hf[k].shape[0], :] )
+                elif sd_hf[k].shape != sd[k].shape:
+                    print(f"skipping {k} due to shape mismatch: {sd_hf[k].shape} != {sd[k].shape}")
+                    raise ValueError(f"shape mismatch: {sd_hf[k].shape} != {sd[k].shape}")
+                else:
+                    with torch.no_grad():
+                        sd_hf[k].copy_(sd[k])
         
         return model_hf
-
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, table_learning_rate):
-        # start with all of the candidate parameters
-        # filter out those that do not require grad
-        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad and not pn.endswith('.table')}
-        table_param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad and pn.endswith('.table')}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {'params': decay_params, 'weight_decay': weight_decay},
-            {'params': nodecay_params, 'weight_decay': 0.0}
-        ]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        num_table_params = sum(p.numel() for pn, p in table_param_dict.items())
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
-        print(f"num table tensors {len(table_param_dict)}, with {num_table_params:,} parameters")
-        # Create AdamW optimizer and use the fused version if it is available
-        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device_type == 'cuda'
-        extra_args = dict(fused=True) if use_fused else dict()
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        table_optimizer = torch.optim.AdamW(table_param_dict.values(), lr=table_learning_rate, betas=betas, **extra_args) if len(table_param_dict) > 0 else None
-        print(f"using fused AdamW: {use_fused}")
-
-        return optimizer, table_optimizer
 
     def estimate_mfu(self, fwdbwd_per_iter, dt):
         """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """

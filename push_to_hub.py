@@ -40,3 +40,9 @@ hf_model = GPT.to_pretrained(model, 'gpt2')
 
 # push hf_model to hub under pbelcak/nanogpt
 hf_model.push_to_hub('pbelcak/nanogpt')
+
+# load pre-trained GPT2 tokenizer
+tokenizer = transformers.GPT2Tokenizer.from_pretrained('gpt2')
+
+# push it to hub under pbelcak/nanogpt
+tokenizer.push_to_hub('pbelcak/nanogpt')

@@ -53,8 +53,8 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_1_8_full.py
 
-# interactive big model training test run
+# interactive big model hf test run
 I=0
-JOB_NAME=train_gpt2_vanilla_295B_2M_$I
+JOB_NAME=train_gpt2_vanilla_295B_2M_hf_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
-	config/train_gpt2_2M_big.py
+	config/train_gpt2_2M_big_hf.py
