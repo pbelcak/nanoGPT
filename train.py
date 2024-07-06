@@ -256,6 +256,15 @@ elif init_from == 'resume':
     checkpoint = torch.load(ckpt_path, map_location=device)
     temperature = checkpoint['curr_temperature']
 
+    # fix the keys of the state dictionary :(
+    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+    # this happens regardless of whether you use hf or the nano model
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+
     if framework_type == 'nano':
         checkpoint_model_args = checkpoint['model_args']
         # force these config attributes to be equal otherwise we can't even resume training
@@ -269,18 +278,11 @@ elif init_from == 'resume':
         if surgeries is not None and len(surgeries) > 0:
             surgery.perform_surgeries(gptconf, model, surgeries)
 
-        state_dict = checkpoint['model']
-        # fix the keys of the state dictionary :(
-        # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-        unwanted_prefix = '_orig_mod.'
-        for k,v in list(state_dict.items()):
-            if k.startswith(unwanted_prefix):
-                state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
         model.load_state_dict(state_dict)
         model.set_temperature(temperature)
     else:
         model = transformers.GPT2LMHeadModel.from_pretrained(model_args_source)
-        model.load_state_dict(checkpoint['model'])
+        model.load_state_dict(state_dict)
     
     iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
     best_val_loss = checkpoint['best_val_loss']
