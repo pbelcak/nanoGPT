@@ -58,3 +58,18 @@ I=0
 JOB_NAME=train_gpt2_vanilla_295B_2M_hf_$I
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/train_gpt2_2M_big_hf.py
+
+# interactive vanilla hf push to hub
+python push_to_hub.py out/gpt2-vanilla-295B-2M-hf/ckpt_150000.pt gpt2-owt-295B
+
+# interactive lm eval invocation
+lm_eval --model hf \
+    --model_args pretrained=pbelcak/gpt2-owt-295B \
+    --tasks hellaswag,openbookqa,commonsense_qa,piqa,social_iqa,winogrande,arc_easy,mmlu \
+    --device cuda:0 \
+    --batch_size 8 \
+    --limit 1000 \
+    --output_path $NANO/out/gpt2-vanilla-295B-2M-hf/results.json
+
+# a keepalive test
+python $PB/keepalive/keepalive.py add --job=train_gpt2_2M_big_hf_owt_sbb --startswith --indicator=$NANO/out/train_gpt2_2M_big_hf_owt_sbb/.DONE --command="$NANO/cluster/run_job_big.sh config/train_gpt2_2M_big_hf_owt_sbb.py"

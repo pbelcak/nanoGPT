@@ -8,6 +8,7 @@ wandb_run_name='gpt2-vanilla-295B-2M-hf-owt-sbb'
 
 framework_type = 'hf'
 model_args_source = 'gpt2'
+dataset = 'owt_sbb_8_5B'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name

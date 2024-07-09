@@ -13,3 +13,4 @@ venv/
 out/
 wandb/
 secrets.sh
+keepalive.db

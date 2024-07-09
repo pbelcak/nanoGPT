@@ -561,6 +561,10 @@ while True:
 
     # termination conditions
     if iter_num > max_iters:
+        if master_process:
+            # signal completion to the keepalive script
+            with open(os.path.join(out_dir, '.DONE'), 'w') as f:
+                f.write('')
         break
 
 if ddp:

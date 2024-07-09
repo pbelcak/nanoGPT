@@ -14,3 +14,8 @@ echo "$SUBMIT_SAVE_ROOT"
 
 # install the project requirements
 python3 -m pip install -r ./requirements.txt
+
+git clone https://github.com/EleutherAI/lm-evaluation-harness
+cd lm-evaluation-harness
+pip install -e .
+cd ..
