@@ -17,7 +17,10 @@ num_proc = 8
 # it is better than 1 usually though
 num_proc_load_dataset = num_proc
 
-enc = tiktoken.get_encoding("gpt2")
+import transformers
+
+# enc = tiktoken.get_encoding("gpt2")
+tokenizer = transformers.GPT2Tokenizer.from_pretrained('gpt2')
 
 if __name__ == '__main__':
     # the first argument passed to the script is the path to the dataset to load
@@ -32,8 +35,8 @@ if __name__ == '__main__':
 
     # we now want to tokenize the dataset. first define the encoding function (gpt2 bpe)
     def process(example):
-        ids = enc.encode_ordinary(example['text']) # encode_ordinary ignores any special tokens
-        ids.append(enc.eot_token) # add the end of text token, e.g. 50256 for gpt2 bpe
+        ids = tokenizer.encode(example['text']) # encode_ordinary ignores any special tokens
+        ids.append(tokenizer.eot_token) # add the end of text token, e.g. 50256 for gpt2 bpe
         # note: I think eot should be prepended not appended... hmm. it's called "eot" though...
         out = {'ids': ids, 'len': len(ids)}
         return out
@@ -57,7 +60,8 @@ if __name__ == '__main__':
         filename = os.path.join(out_dir, f'{split}.bin')
         dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
         arr = np.memmap(filename, dtype=dtype, mode='w+', shape=(arr_len,))
-        total_batches = min(1024, len(dset))
+        total_batches = min(5*1024, len(dset))
+        print(f"Total batches: {total_batches}")
 
         idx = 0
         for batch_idx in tqdm(range(total_batches), desc=f'writing {filename}'):

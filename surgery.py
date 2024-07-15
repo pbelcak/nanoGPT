@@ -1,5 +1,5 @@
 from nanogpt_model.modelling_nanogpt import Block, MLP
-from nanogpt_model.mlps import PeerMLP
+from nanogpt_model.mlps import PeerMLP, SmallMLP
 
 def perform_surgeries(config, model, surgeries):
     for surgery_type, layer in surgeries:
@@ -17,9 +17,18 @@ def perform_surgeries(config, model, surgeries):
             tabulate_last(config, model, layer)
         elif surgery_type == 'unfreeze_last':
             unfreeze_last(config, model, layer)
+        elif surgery_type == 'pte_last':
+            pte_last(config, model, layer)
+        elif surgery_type == 'smallmlp512':
+            smallmlp512(config, model, layer)
         else:
             raise ValueError(f"Unknown surgery type: {surgery_type}")
 
+def smallmlp512(config, model, block_idx: int) -> None:
+    tgt_block: Block = model.transformer.h[block_idx]
+
+    tgt_block.mlp = SmallMLP(config, 512)
+    print("Changed the last mlp of the block ", block_idx, " to have hidden size 512")
 
 def peerify(config, model, block_idx: int) -> None:
     tgt_block: Block = model.transformer.h[block_idx]
@@ -99,3 +108,10 @@ def tabulate_last(config, model, block_idx: int) -> None:
     tgt_block.mlp.tabulate_last()
     print("Tabulated the last mlp of the PeerMLP of block  ", block_idx)
 
+def pte_last(config, model, block_idx: int) -> None:
+    tgt_block: Block = model.transformer.h[block_idx]
+    if not isinstance(tgt_block.mlp, PeerMLP):
+        raise ValueError(f"Block {block_idx} does not have a PeerMLP as mlp")
+    
+    tgt_block.mlp.pte_last()
+    print("PTEd the last mlp of the PeerMLP of block  ", block_idx)

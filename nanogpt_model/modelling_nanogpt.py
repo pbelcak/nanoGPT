@@ -217,7 +217,8 @@ class GPT(PreTrainedModel):
 
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-1)
+            # print(f"Deliquitent count: {(labels > 50256).sum().item()}, min {labels.min().item()}, max {labels.max().item()}")
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100)
 
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position

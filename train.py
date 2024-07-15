@@ -275,6 +275,8 @@ elif init_from == 'resume':
         # create the model
         gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
+        if past_surgeries is not None and len(past_surgeries) > 0:
+            surgery.perform_surgeries(gptconf, model, past_surgeries)
         if surgeries is not None and len(surgeries) > 0:
             surgery.perform_surgeries(gptconf, model, surgeries)
 
@@ -286,6 +288,20 @@ elif init_from == 'resume':
     
     iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
     best_val_loss = checkpoint['best_val_loss']
+
+    # print all parameters
+    for name, param in model.named_parameters():
+        print(name, param.requires_grad)
+
+    # freeze every parameter that is not related to PeerMLP layer 11 mlp
+    for name, param in model.named_parameters():
+        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name and ".11.mlp." not in name:
+            param.requires_grad = False
+
+    print("These params are not frozen")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name)
 
 elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
     print(f"Initializing from checkpoint: {init_from}")
@@ -303,6 +319,7 @@ elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
         # create the model
         gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
+
         if init_from.startswith('peerify_ckpt:'):
             if past_surgeries is not None and len(past_surgeries) > 0:
                 surgery.perform_surgeries(gptconf, model, past_surgeries)
@@ -330,9 +347,9 @@ elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
     for name, param in model.named_parameters():
         print(name, param.requires_grad)
 
-    # freeze every parameter that is not related to PeerMLP
+    # freeze every parameter that is not related to PeerMLP layer 11 mlp
     for name, param in model.named_parameters():
-        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name:
+        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name and ".11.mlp." not in name:
             param.requires_grad = False
 
     print("These params are not frozen")
