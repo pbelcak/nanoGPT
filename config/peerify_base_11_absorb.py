@@ -4,21 +4,23 @@
 
 wandb_log = True
 wandb_project = 'gpt2-peerify'
-wandb_run_name='peerify_base_11_tabularmoe'
+wandb_run_name='peerify_base_11_absorb'
 
 # setup out dir
 out_dir = "out/"+wandb_run_name
-standalone_ckpt_frequency = 2500
+standalone_ckpt_frequency = 5000
 
 # init
-init_from = 'peerify_ckpt:out/peerify_base_11_1_8_full/ckpt_10000.pt'
+init_from = 'peerify_ckpt:out/peerify_base_11_tabularmoe/ckpt_10000.pt'
 past_surgeries = [
     ('freeze_all', -1),
     ('peerify', 11),
-]
-surgeries = [
     ('freeze_all', -1),
     ('pte_last', 11),
+]
+surgeries = [
+    ('unfreeze_all', -1),
+    ('freeze_mlp', 11),
 ]
 
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs * 2 nodes = ~1M
@@ -27,8 +29,9 @@ block_size = 1024
 gradient_accumulation_steps = 5 * 8 * 2
 
 # lr
-# we had 6e-4 for ~0.5M tokens per batch
-learning_rate = 6e-4
+# we had 6e-4 for ~0.5M tokens per batch in pretraining
+learning_rate = 6e-5
+min_lr = 6e-6
 
 # weight decay
 weight_decay = 1e-1

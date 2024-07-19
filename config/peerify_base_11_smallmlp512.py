@@ -13,6 +13,7 @@ standalone_ckpt_frequency = 2500
 # init
 init_from = 'peerify_ckpt:out/gpt2-vanilla-295B-2M/ckpt_150000.pt'
 surgeries = [
+    ('freeze_all', -1),
     ('smallmlp512', 11),
 ]
 

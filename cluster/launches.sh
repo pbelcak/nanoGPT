@@ -32,3 +32,6 @@ JOB_NAME=gpt2_lut_6B_${I}
 ./cluster/run_job.sh \
 	config/peerify_base_11_smallmlp512.py
 
+# absorb any loss in predictive performance by other neural components
+./cluster/run_job.sh \
+	config/peerify_base_11_absorb.py

@@ -76,11 +76,11 @@ eval_interval = 2000
 log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
-always_save_checkpoint = True # if True, always save a checkpoint after each eval
 standalone_ckpt_frequency = 10000 # save a standalone checkpoint every N iters (will not be overwritten by the following ckpts)
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 framework_type = 'nano' # 'nano' or 'hf'
 model_args_source = 'config' # 'config' or hugginface name of the config, e.g. 'gpt2*'
+# surgeries
 surgeries = None # no surgeries by default
 past_surgeries = None # no past surgeries by default
 # wandb logging
@@ -249,17 +249,20 @@ if init_from == 'scratch':
         gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
 
-elif init_from == 'resume':
-    print(f"Resuming training from {out_dir}")
-    # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+elif init_from == 'resume' or init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt:'):
+    if init_from == 'resume':
+        print(f"Resuming from checkpoint: {out_dir}/ckpt.pt")
+        ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    else:
+        ckpt_path = init_from.split(':')[1]
+        print(f"Initializing from checkpoint: {ckpt_path}")
+
     checkpoint = torch.load(ckpt_path, map_location=device)
     temperature = checkpoint['curr_temperature']
 
+    state_dict = checkpoint['model']
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    # this happens regardless of whether you use hf or the nano model
-    state_dict = checkpoint['model']
     unwanted_prefix = '_orig_mod.'
     for k,v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
@@ -275,84 +278,27 @@ elif init_from == 'resume':
         # create the model
         gptconf = GPTConfig(**model_args)
         model = GPT(gptconf)
-        if past_surgeries is not None and len(past_surgeries) > 0:
-            surgery.perform_surgeries(gptconf, model, past_surgeries)
-        if surgeries is not None and len(surgeries) > 0:
-            surgery.perform_surgeries(gptconf, model, surgeries)
 
-        model.load_state_dict(state_dict)
-        model.set_temperature(temperature)
-    else:
-        model = transformers.GPT2LMHeadModel.from_pretrained(model_args_source)
-        model.load_state_dict(state_dict)
-    
-    iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
-    best_val_loss = checkpoint['best_val_loss']
-
-    # print all parameters
-    for name, param in model.named_parameters():
-        print(name, param.requires_grad)
-
-    # freeze every parameter that is not related to PeerMLP layer 11 mlp
-    for name, param in model.named_parameters():
-        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name and ".11.mlp." not in name:
-            param.requires_grad = False
-
-    print("These params are not frozen")
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(name)
-
-elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
-    print(f"Initializing from checkpoint: {init_from}")
-    ckpt_path = init_from.split(':')[1]
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    temperature = checkpoint['curr_temperature']
-
-    if framework_type == 'nano':
-        checkpoint_model_args = checkpoint['model_args']
-        # force these config attributes to be equal otherwise we can't even resume training
-        # the rest of the attributes (e.g. dropout) can stay as desired from command line
-        for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-            model_args[k] = checkpoint_model_args[k]
-        
-        # create the model
-        gptconf = GPTConfig(**model_args)
-        model = GPT(gptconf)
-
-        if init_from.startswith('peerify_ckpt:'):
+        if not init_from.startswith('eval_ckpt:'):
             if past_surgeries is not None and len(past_surgeries) > 0:
                 surgery.perform_surgeries(gptconf, model, past_surgeries)
+            if surgeries is not None and len(surgeries) > 0:
+                surgery.perform_surgeries(gptconf, model, surgeries)
         
-        state_dict = checkpoint['model']
-        # fix the keys of the state dictionary :(
-        # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-        unwanted_prefix = '_orig_mod.'
-        for k,v in list(state_dict.items()):
-            if k.startswith(unwanted_prefix):
-                state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
         model.load_state_dict(state_dict)
         ckpt_temperature = checkpoint['curr_temperature']
         model.set_temperature(ckpt_temperature)
     else:
         model = transformers.GPT2LMHeadModel.from_pretrained(model_args_source)
         model.load_state_dict(checkpoint['model'])
-    iter_num = 0
+    iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
+    best_val_loss = checkpoint['best_val_loss'] if init_from == 'resume' else 1000
 
-    if init_from.startswith('peerify_ckpt:'):
-        if surgeries is not None and len(surgeries) > 0:
-            surgery.perform_surgeries(gptconf, model, surgeries)
-
-    # print all parameters
+    print("A list of all the parameters and whether they require grad:")
     for name, param in model.named_parameters():
         print(name, param.requires_grad)
 
-    # freeze every parameter that is not related to PeerMLP layer 11 mlp
-    for name, param in model.named_parameters():
-        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name and ".11.mlp." not in name:
-            param.requires_grad = False
-
-    print("These params are not frozen")
+    print("These params are not frozen:")
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(name)
@@ -401,7 +347,7 @@ if ddp:
 def estimate_loss():
     out = {}
     model.eval()
-    #model.module.start_tracking()
+    # model.module.start_tracking()
 
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -490,23 +436,26 @@ while True:
 
 
         # checkpointing
-        if losses['val'] < best_val_loss or always_save_checkpoint:
+        if master_process and iter_num > 0:
             best_val_loss = losses['val']
-            if iter_num > 0:
-                checkpoint = {
-                    'model': raw_model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'model_args': model_args,
-                    'curr_temperature': temperature,
-                    'iter_num': iter_num,
-                    'best_val_loss': best_val_loss,
-                    'config': config,
-                }
-                print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+            checkpoint = {
+                'model': raw_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'model_args': model_args,
+                'curr_temperature': temperature,
+                'iter_num': iter_num,
+                'best_val_loss': best_val_loss,
+                'config': config,
+            }
+            print(f"saving checkpoint to {out_dir}")
+            torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+            
+            if losses['val'] < best_val_loss:
+                print(f"saving best checkpoint to {out_dir}")
+                torch.save(checkpoint, os.path.join(out_dir, 'best_ckpt.pt'))
 
-                if iter_num % standalone_ckpt_frequency == 0:
-                    torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{iter_num}.pt'))
+            if iter_num % standalone_ckpt_frequency == 0:
+                torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{iter_num}.pt'))
     
     if eval_only:
         break

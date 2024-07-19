@@ -57,9 +57,16 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_tabularmoe.py
 
-# interactive gpt peerfication fullvqized tabularmoe step 2
+# interactive gpt peerfication fullvqized tabularmoe absorption
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_absorb.py
+
+# interactive gpt peerfication fullvqized smallmlp512 step 2
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_smallmlp512.py
+
+# interactive gpt peerfication fullvqized smallmlp512 step 2
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  bench_layer.py
 
 # interactive big model hf test run
 I=0

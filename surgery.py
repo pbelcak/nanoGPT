@@ -1,9 +1,17 @@
 from nanogpt_model.modelling_nanogpt import Block, MLP
 from nanogpt_model.mlps import PeerMLP, SmallMLP
 
+import torch
+
 def perform_surgeries(config, model, surgeries):
     for surgery_type, layer in surgeries:
-        if surgery_type == 'peerify':
+        if surgery_type == 'freeze_all':
+            freeze_all(config, model)
+        elif surgery_type == 'unfreeze_all':
+            unfreeze_all(config, model)
+        elif surgery_type == 'freeze_mlp':
+            freeze_mlp(config, model, layer)
+        elif surgery_type == 'peerify':
             peerify(config, model, layer)
         elif surgery_type == "add_peer_mlp":
             add_peer_mlp(config, model, layer)
@@ -23,6 +31,23 @@ def perform_surgeries(config, model, surgeries):
             smallmlp512(config, model, layer)
         else:
             raise ValueError(f"Unknown surgery type: {surgery_type}")
+
+def freeze_all(config, model) -> None:
+    for param in model.parameters():
+        param.requires_grad = False
+    print("Frozen all the model parameters")
+    
+def unfreeze_all(config, model) -> None:
+    for param in model.parameters():
+        if param.dtype == torch.float32 or param.dtype == torch.float16 or param.dtype == torch.bfloat16:
+            param.requires_grad = True
+    print("Unfrozen all the model parameters")
+
+def freeze_mlp(config, model, layer: int) -> None:
+    tgt_block: Block = model.transformer.h[layer]
+    for param in tgt_block.mlp.parameters():
+        param.requires_grad = False
+    print("Frozen the mlp of block ", layer)
 
 def smallmlp512(config, model, block_idx: int) -> None:
     tgt_block: Block = model.transformer.h[block_idx]

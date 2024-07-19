@@ -450,6 +450,8 @@ class PeerMLP(nn.Module):
             for param in mlp.parameters():
                 param.requires_grad = False
 
+        # by the end of __init__, only the VQizer is trainable
+
     def add_peer(self, new_mlp: MLP, new_vqizer: VQizer, permutation: torch.Tensor) -> int:
         new_idx: int = len(self.mlps)
         self.mlps.append(new_mlp)
@@ -509,7 +511,8 @@ class PeerMLP(nn.Module):
         # x has shape (batch, block_size, n_embd)
         y = torch.zeros_like(x)
         for permutation, vqizer, mlp in zip(self.permutations, self.vqizers, self.mlps):
-            x_permuted = x[:, :, permutation]
+            # x_permuted = x[:, :, permutation]
+            x_permuted = x
             if isinstance(mlp, TabularMLP):
                 _, indices = vqizer(x_permuted, return_indices=True)
                 y_contrib = mlp(indices)
@@ -675,27 +678,23 @@ class TabularMoE(nn.Module):
         # head_indices is a long tensor of shape (batch, block_size, n_heads)
         # x is a (b)float(16) tensor of shape (batch, block_size, n_embd)
         x = x.flatten(0, 1).unsqueeze(1) # shape (batch * block_size, 1, n_embd)
+        head_indices_flat = head_indices.flatten(0, 1) # shape (batch * block_size, n_heads)
         
-        # convert head_indices into absolute indices
-        flat_indices = torch.zeros_like(head_indices, dtype=torch.long) # shape (batch, block_size, n_heads)
-
+        # convert head_indices_flat into absolute indices
+        flat_indices = torch.zeros((x.shape[0] * x.shape[1],), dtype=torch.long, device=x.device) # shape (batch, block_size, n_heads)
         multiplier: int = 1
         for i in range(self.n_heads):
-            flat_indices[:, :, i] = multiplier * head_indices[:, :, i]
+            flat_indices = flat_indices + multiplier * head_indices_flat[:, i]
             multiplier *= self.n_options
-        
-        # sum up the contributions of the heads
-        flat_indices = flat_indices.sum(dim=-1) # shape (batch, block_size)
-        flat_indices = flat_indices.flatten().unsqueeze(-1).expand(-1, self.n_hidden * self.n_embd) # shape (batch * block_size, n_hidden * n_embd)
-
+    
         # index select the table
-        linear1 = torch.gather(self.linear1_table, 0, flat_indices, sparse_grad=False) # shape (batch * block_size, n_hidden * n_embd)
+        linear1 = torch.index_select(self.linear1_table, 0, flat_indices) # shape (batch * block_size, n_embd * n_hidden)
         linear1 = linear1.view(-1, self.n_embd, self.n_hidden)
         y = torch.bmm(x, linear1) # shape (batch * block_size, 1, n_hidden)
 
         y = torch.nn.functional.gelu(y)
 
-        linear2 = torch.gather(self.linear2_table, 0, flat_indices, sparse_grad=False)
+        linear2 = torch.index_select(self.linear2_table, 0, flat_indices)
         linear2 = linear2.view(-1, self.n_hidden, self.n_embd)
         y = torch.bmm(y, linear2) # shape (batch * block_size, 1, n_embd)
 
