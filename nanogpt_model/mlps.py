@@ -5,6 +5,8 @@ import torch.nn.functional as F
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.n_embd = config.n_embd
+        self.n_hidden = config.n_embd * 4
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
@@ -14,6 +16,23 @@ class MLP(nn.Module):
         x = self.c_fc(x)
         x = self.gelu(x)
         x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+class SmallMLP(nn.Module):
+    def __init__(self, config, n_hidden):
+        super().__init__()
+        self.n_embd = config.n_embd
+        self.n_hidden = n_hidden
+        self.fc    = nn.Linear(config.n_embd, n_hidden, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.proj  = nn.Linear(n_hidden, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.fc(x)
+        x = self.gelu(x)
+        x = self.proj(x)
         x = self.dropout(x)
         return x
 
@@ -431,6 +450,8 @@ class PeerMLP(nn.Module):
             for param in mlp.parameters():
                 param.requires_grad = False
 
+        # by the end of __init__, only the VQizer is trainable
+
     def add_peer(self, new_mlp: MLP, new_vqizer: VQizer, permutation: torch.Tensor) -> int:
         new_idx: int = len(self.mlps)
         self.mlps.append(new_mlp)
@@ -490,10 +511,14 @@ class PeerMLP(nn.Module):
         # x has shape (batch, block_size, n_embd)
         y = torch.zeros_like(x)
         for permutation, vqizer, mlp in zip(self.permutations, self.vqizers, self.mlps):
-            x_permuted = x[:, :, permutation]
+            # x_permuted = x[:, :, permutation]
+            x_permuted = x
             if isinstance(mlp, TabularMLP):
                 _, indices = vqizer(x_permuted, return_indices=True)
                 y_contrib = mlp(indices)
+            elif isinstance(mlp, TabularMoE):
+                _, indices = vqizer(x_permuted, return_indices=True)
+                y_contrib = mlp(x_permuted, indices)
             else:
                 y_contrib = mlp(vqizer(x_permuted))
             
@@ -522,6 +547,18 @@ class PeerMLP(nn.Module):
         # tabulate the last mlp
         self.mlps.pop(-1)
         self.mlps.append(TabularMLP(last_vqizer.n_embd, last_vqizer.n_vq_heads, last_vqizer.n_vq_options))
+
+    def pte_last(self) -> None:
+        # get the last VQizer
+        last_vqizer = self.vqizers[-1]
+
+        # freeze all parameters of the last vqizer
+        for param in last_vqizer.parameters():
+            param.requires_grad = False
+        
+        # moe-tabulate the last mlp
+        self.mlps.pop(-1)
+        self.mlps.append(TabularMoE(last_vqizer.n_embd, 512, last_vqizer.n_vq_heads, last_vqizer.n_vq_options))
 
 
 class TabularMLP(nn.Module):
@@ -606,34 +643,61 @@ class FullVQizer(nn.Module):
         x_prepped = x
         logits = torch.einsum('bse,hoe->bsho', x_prepped, self.vq_head_weights) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         
-        #if self.training:
         if self.use_temperature:
             probs = F.softmax(logits / self.temperature, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
         else:
             probs = F.softmax(logits, dim=-1) # shape (batch, seq_len, n_vqheads, n_vqoptions)
 
-        if self.is_frozen:
-            _, argmax = torch.max(logits, dim=-1)
-            hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # pylint: disable=not-callable
-            # shape (batch, seq_len, n_vqheads, n_vqoptions)
-            probs = hard_probs + probs - probs.detach()
-        #else:
-            # at inference time we turn the probabilities into one-hot vectors
-            # this is the same as taking the argmax of the probs
-            #_, argmax = torch.max(logits, dim=-1)
-
-            #if self.tracking_enabled:
-            #    flatargmax = argmax.detach().flatten(0, 1) # shape (batch * seq_len, n_vqheads)
-                # turn flatargmax into a list of n_vqoptions-lists
-            #    self.tracking_entries.extend(flatargmax.tolist())
-            
-            #probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        argmax = torch.max(logits, dim=-1).indices
+        hard_probs = F.one_hot(argmax, num_classes=self.n_vq_options).to(device=x.device, dtype=logits.dtype) # pylint: disable=not-callable
+        # shape (batch, seq_len, n_vqheads, n_vqoptions)
+        probs = hard_probs + probs - probs.detach()
 
         # perform soft mixture by matmul of probs and codebooks
         x = torch.einsum('bsho,hoe->bshe', probs, self.vq_codebooks) # shape (batch, seq_len, n_vqheads, n_embd)
         x = x.mean(-2) # shape (batch, seq_len, n_embd)
 
-        if not return_indices or (self.training and not self.is_frozen):
+        if not return_indices:
             return x
         else:
             return x, argmax
+
+class TabularMoE(nn.Module):
+    def __init__(self, n_embd: int, n_hidden: int, n_heads: int, n_options: int) -> None:
+        super().__init__()
+        self.n_embd = n_embd
+        self.n_hidden = n_hidden
+        self.n_heads = n_heads
+        self.n_options = n_options
+        self.table_size = n_options ** n_heads
+
+        self.linear1_table = nn.Parameter(torch.randn(self.table_size, n_embd * n_hidden, dtype=torch.bfloat16)*0.02)
+        self.linear2_table = nn.Parameter(torch.randn(self.table_size, n_hidden * n_embd, dtype=torch.bfloat16)*0.02)
+
+    def forward(self, x: torch.Tensor, head_indices: torch.Tensor) -> torch.Tensor:
+        # head_indices is a long tensor of shape (batch, block_size, n_heads)
+        # x is a (b)float(16) tensor of shape (batch, block_size, n_embd)
+        x = x.flatten(0, 1).unsqueeze(1) # shape (batch * block_size, 1, n_embd)
+        head_indices_flat = head_indices.flatten(0, 1) # shape (batch * block_size, n_heads)
+        
+        # convert head_indices_flat into absolute indices
+        flat_indices = torch.zeros((x.shape[0] * x.shape[1],), dtype=torch.long, device=x.device) # shape (batch, block_size, n_heads)
+        multiplier: int = 1
+        for i in range(self.n_heads):
+            flat_indices = flat_indices + multiplier * head_indices_flat[:, i]
+            multiplier *= self.n_options
+    
+        # index select the table
+        linear1 = torch.index_select(self.linear1_table, 0, flat_indices) # shape (batch * block_size, n_embd * n_hidden)
+        linear1 = linear1.view(-1, self.n_embd, self.n_hidden)
+        y = torch.bmm(x, linear1) # shape (batch * block_size, 1, n_hidden)
+
+        y = torch.nn.functional.gelu(y)
+
+        linear2 = torch.index_select(self.linear2_table, 0, flat_indices)
+        linear2 = linear2.view(-1, self.n_hidden, self.n_embd)
+        y = torch.bmm(y, linear2) # shape (batch * block_size, 1, n_embd)
+
+        y = y.view(*head_indices.shape[0:2], self.n_embd)
+
+        return y

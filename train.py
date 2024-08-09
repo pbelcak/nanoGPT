@@ -27,6 +27,9 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
+import transformers
+
+from optim import configure_optimizers
 from nanogpt_model.modelling_nanogpt import GPT
 from nanogpt_model.configuration_nanogpt import GPTConfig
 
@@ -73,9 +76,11 @@ eval_interval = 2000
 log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
-always_save_checkpoint = True # if True, always save a checkpoint after each eval
 standalone_ckpt_frequency = 10000 # save a standalone checkpoint every N iters (will not be overwritten by the following ckpts)
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
+framework_type = 'nano' # 'nano' or 'hf'
+model_args_source = 'config' # 'config' or hugginface name of the config, e.g. 'gpt2*'
+# surgeries
 surgeries = None # no surgeries by default
 past_surgeries = None # no past surgeries by default
 # wandb logging
@@ -116,7 +121,7 @@ warmup_iters = 2000 # how many steps to warm up for
 lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # temperature setup
-use_temperature = True
+use_temperature = False
 temperature_requires_grad = False
 start_temperature = 1.0
 end_temperature = 0.01
@@ -177,7 +182,7 @@ if can_autoresume:
 
 # poor man's data loader
 data_dir = os.path.join('data', dataset)
-def get_batch(split):
+def get_batch(split, shift: int = 0):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
     if split == 'train':
@@ -186,7 +191,6 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
-    shift: int = 1
     y = torch.stack([torch.from_numpy((data[i+shift:i+shift+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
@@ -234,60 +238,28 @@ model_args = dict(
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
-    # determine the vocab size we'll use for from-scratch training
-    if meta_vocab_size is None:
-        print("defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)")
-    model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
-
-elif init_from == 'resume':
-    print(f"Resuming training from {out_dir}")
-    # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
     
-    # create the model
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
-    if surgeries is not None and len(surgeries) > 0:
-        surgery.perform_surgeries(gptconf, model, surgeries)
+    if framework_type == 'hf':
+        model = transformers.GPT2LMHeadModel(transformers.GPT2Config.from_pretrained(model_args_source))
+    else:
+        # determine the vocab size we'll use for from-scratch training
+        if meta_vocab_size is None:
+            print("defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)")
+        model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
+        gptconf = GPTConfig(**model_args)
+        model = GPT(gptconf)
 
-    state_dict = checkpoint['model']
-    # fix the keys of the state dictionary :(
-    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
-    iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
+elif init_from == 'resume' or init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt:'):
+    if init_from == 'resume':
+        print(f"Resuming from checkpoint: {out_dir}/ckpt.pt")
+        ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    else:
+        ckpt_path = init_from.split(':')[1]
+        print(f"Initializing from checkpoint: {ckpt_path}")
+
+    checkpoint = torch.load(ckpt_path, map_location=device)
     temperature = checkpoint['curr_temperature']
-    model.set_temperature(temperature)
-    best_val_loss = checkpoint['best_val_loss']
 
-elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
-    print(f"Initializing from checkpoint: {init_from}")
-    ckpt_path = init_from.split(':')[1]
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
-    
-    # create the model
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
-    if init_from.startswith('peerify_ckpt:'):
-        if past_surgeries is not None and len(past_surgeries) > 0:
-            surgery.perform_surgeries(gptconf, model, past_surgeries)
-    
     state_dict = checkpoint['model']
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
@@ -295,49 +267,67 @@ elif init_from.startswith('peerify_ckpt:') or init_from.startswith('eval_ckpt'):
     for k,v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
-    iter_num = 0
-    ckpt_temperature = checkpoint['curr_temperature']
-    model.set_temperature(ckpt_temperature)
 
-    if init_from.startswith('peerify_ckpt:'):
-        if surgeries is not None and len(surgeries) > 0:
-            surgery.perform_surgeries(gptconf, model, surgeries)
+    if framework_type == 'nano':
+        checkpoint_model_args = checkpoint['model_args']
+        # force these config attributes to be equal otherwise we can't even resume training
+        # the rest of the attributes (e.g. dropout) can stay as desired from command line
+        for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+            model_args[k] = checkpoint_model_args[k]
+        
+        # create the model
+        gptconf = GPTConfig(**model_args)
+        model = GPT(gptconf)
 
-    # print all parameters
+        if not init_from.startswith('eval_ckpt:'):
+            if past_surgeries is not None and len(past_surgeries) > 0:
+                surgery.perform_surgeries(gptconf, model, past_surgeries)
+            if surgeries is not None and len(surgeries) > 0:
+                surgery.perform_surgeries(gptconf, model, surgeries)
+        
+        model.load_state_dict(state_dict)
+        ckpt_temperature = checkpoint['curr_temperature']
+        model.set_temperature(ckpt_temperature)
+    else:
+        model = transformers.GPT2LMHeadModel.from_pretrained(model_args_source)
+        model.load_state_dict(checkpoint['model'])
+    iter_num = checkpoint['iter_num'] if init_from == 'resume' else 0
+    best_val_loss = checkpoint['best_val_loss'] if init_from == 'resume' else 1000
+
+    print("A list of all the parameters and whether they require grad:")
     for name, param in model.named_parameters():
         print(name, param.requires_grad)
 
-    # freeze every parameter that is not related to PeerMLP
-    for name, param in model.named_parameters():
-        if ".mlp.mlps." not in name and ".mlp.vqizers." not in name and ".mlp.permutations." not in name:
-            param.requires_grad = False
-
-    print("These params are not frozen")
+    print("These params are not frozen:")
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(name)
     
-elif init_from.startswith('gpt2'):
+elif init_from.startswith('pretrained:'):
+    init_from_aspect: str = init_from.split(':')[0]
+    model_to_init_from: str = init_from.split(':')[1]
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
     # initialize from OpenAI GPT-2 weights
     override_args = dict(dropout=dropout)
-    model = GPT.from_pretrained(init_from, override_args)
-    # read off the created config params, so we can store them into checkpoint correctly
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = getattr(model.config, k)
+    if framework_type == 'hf':
+        model = transformers.GPT2LMHeadModel.from_pretrained(model_to_init_from)
+    else:
+        model = GPT.from_pretrained(model_to_init_from, override_args)
+        # read off the created config params, so we can store them into checkpoint correctly
+        for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+            model_args[k] = getattr(model.config, k)
     
-# crop down the model block size if desired, using model surgery
-if block_size < model.config.block_size:
-    model.crop_block_size(block_size)
-    model_args['block_size'] = block_size # so that the checkpoint will have the right value
+        # crop down the model block size if desired, using model surgery
+        if block_size < model.config.block_size:
+            model.crop_block_size(block_size)
+            model_args['block_size'] = block_size # so that the checkpoint will have the right value
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
-optimizer, table_optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type, table_learning_rate)
+optimizer, table_optimizer = configure_optimizers(model, weight_decay, learning_rate, (beta1, beta2), device_type, table_learning_rate)
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
 checkpoint = None # free up memory
@@ -357,14 +347,15 @@ if ddp:
 def estimate_loss():
     out = {}
     model.eval()
-    #model.module.start_tracking()
+    # model.module.start_tracking()
 
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                model_out = model(X, labels=Y, return_dict=True, use_cache=False, output_attentions=False, output_hidden_states=False)
+                loss = model_out['loss']
             losses[k] = loss.item()
         out[split] = losses.mean()
 
@@ -445,23 +436,26 @@ while True:
 
 
         # checkpointing
-        if losses['val'] < best_val_loss or always_save_checkpoint:
+        if master_process and iter_num > 0:
             best_val_loss = losses['val']
-            if iter_num > 0:
-                checkpoint = {
-                    'model': raw_model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'model_args': model_args,
-                    'curr_temperature': temperature,
-                    'iter_num': iter_num,
-                    'best_val_loss': best_val_loss,
-                    'config': config,
-                }
-                print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+            checkpoint = {
+                'model': raw_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'model_args': model_args,
+                'curr_temperature': temperature,
+                'iter_num': iter_num,
+                'best_val_loss': best_val_loss,
+                'config': config,
+            }
+            print(f"saving checkpoint to {out_dir}")
+            torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+            
+            if losses['val'] < best_val_loss:
+                print(f"saving best checkpoint to {out_dir}")
+                torch.save(checkpoint, os.path.join(out_dir, 'best_ckpt.pt'))
 
-                if iter_num % standalone_ckpt_frequency == 0:
-                    torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{iter_num}.pt'))
+            if iter_num % standalone_ckpt_frequency == 0:
+                torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{iter_num}.pt'))
     
     if eval_only:
         break
@@ -470,7 +464,7 @@ while True:
     # and using the GradScaler if data type is float16
     for micro_step in range(gradient_accumulation_steps):
         # set the temperature in each micro_step (in case the temp gradients are set to True)
-        if not eval_only:
+        if not eval_only and use_temperature:
             raw_model.set_temperature(temperature)
 
         if ddp:
@@ -480,7 +474,8 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            logits, loss = model(X, Y)
+            model_out = model(X, labels=Y, return_dict=True, use_cache=False, output_attentions=False, output_hidden_states=False)
+            loss, logits = model_out['loss'], model_out['logits']
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
@@ -509,8 +504,11 @@ while True:
         # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
         lossf = loss.item() * gradient_accumulation_steps
         if local_iter_num >= 5: # let the training loop settle a bit
-            mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
-            running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+            if framework_type == 'nano':
+                mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
+                running_mfu = mfu if running_mfu == 0.0 else 0.9*running_mfu + 0.1*mfu
+            else:
+                running_mfu = 0.0
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
@@ -529,6 +527,10 @@ while True:
 
     # termination conditions
     if iter_num > max_iters:
+        if master_process:
+            # signal completion to the keepalive script
+            with open(os.path.join(out_dir, '.DONE'), 'w') as f:
+                f.write('')
         break
 
 if ddp:

@@ -53,8 +53,58 @@ PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_ad
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
 	config/peerify_base_11_1_8_full.py
 
-# interactive big model training test run
-I=0
-JOB_NAME=train_gpt2_vanilla_295B_2M_$I
+# interactive gpt peerfication fullvqized tabularmoe step 2
 PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
-	config/train_gpt2_2M_big.py
+	config/peerify_base_11_tabularmoe.py
+
+# interactive gpt peerfication fullvqized tabularmoe absorption
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_absorb.py
+
+# interactive gpt peerfication fullvqized smallmlp512 step 2
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/peerify_base_11_smallmlp512.py
+
+# interactive gpt peerfication fullvqized smallmlp512 step 2
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  bench_layer.py
+
+# interactive big model hf test run
+I=0
+JOB_NAME=train_gpt2_vanilla_295B_2M_hf_$I
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} torchrun --nproc_per_node 8 --master_addr $MASTER_ADDR --master_port $MASTER_PORT --nnodes 1 --node_rank 0  train.py \
+	config/train_gpt2_2M_big_hf.py
+
+# interactive vanilla hf push to hub
+python push_to_hub.py out/gpt2-vanilla-295B-2M-hf/ckpt_80000.pt gpt2-owt-295B-80k
+python push_to_hub.py out/gpt2-vanilla-295B-2M-hf-owt-sbb/ckpt_80000.pt gpt2-owt-sbb-295B-80k
+
+# interactive lm eval invocation
+lm_eval --model hf \
+    --model_args pretrained=pbelcak/gpt2-owt-295B \
+    --tasks hellaswag,openbookqa,commonsense_qa,piqa,social_iqa,winogrande,arc_easy,mmlu \
+    --device cuda:0 \
+    --batch_size 8 \
+    --limit 1000 \
+    --output_path $NANO/out/gpt2-vanilla-295B-2M-hf/results.json
+
+lm_eval --model hf \
+    --model_args pretrained=pbelcak/gpt2-owt-295B-80k \
+    --tasks hellaswag,openbookqa,commonsense_qa,piqa,social_iqa,winogrande,arc_easy,mmlu \
+    --device cuda:0 \
+    --batch_size 8 \
+    --limit 1000 \
+    --output_path $NANO/out/gpt2-vanilla-295B-2M-hf/results-80k.json
+
+lm_eval --model hf \
+    --model_args pretrained=pbelcak/gpt2-owt-sbb-295B-80k \
+    --tasks hellaswag,openbookqa,commonsense_qa,piqa,social_iqa,winogrande,arc_easy,mmlu \
+    --device cuda:0 \
+    --batch_size 8 \
+    --limit 1000 \
+    --output_path $NANO/out/gpt2-vanilla-295B-2M-hf-owt-sbb/results-80k
+
+# a keepalive test
+python $PB/keepalive/keepalive.py add --job=train_gpt2_2M_big_hf_owt_sbb --startswith --indicator=$NANO/out/train_gpt2_2M_big_hf_owt_sbb/.DONE --command="$NANO/cluster/run_job_big.sh config/train_gpt2_2M_big_hf_owt_sbb.py"
+
+# prepare boosted data
+PYTHONPATH=${PROJECT_PATH}:${PYTHONPATH} python ./data/boosted/prepare.py $PB/cache/owt_sbb_41_5B

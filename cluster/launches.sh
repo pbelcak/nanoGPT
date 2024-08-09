@@ -23,3 +23,15 @@ I=0
 JOB_NAME=gpt2_lut_6B_${I}
 ./cluster/run_job.sh \
 	config/train_gpt2_lut_6B.py
+
+# insert and tune-in tabular moe (pte)
+./cluster/run_job.sh \
+	config/peerify_base_11_tabularmoe.py
+
+# insert and tune-in small mlp
+./cluster/run_job.sh \
+	config/peerify_base_11_smallmlp512.py
+
+# absorb any loss in predictive performance by other neural components
+./cluster/run_job.sh \
+	config/peerify_base_11_absorb.py
